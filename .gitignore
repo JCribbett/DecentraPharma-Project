@@ -1,0 +1,15 @@
+# Byte-compiled Python files
+*.pyc
+__pycache__/
+
+# Virtual environment
+venv/
+.venv/
+
+# RDKit specific
+*.log
+*.csv
+
+# OS generated files
+.DS_Store
+Thumbs.db
