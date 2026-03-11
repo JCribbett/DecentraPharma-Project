@@ -1,1 +1,7 @@
+ray[default]
+ipfshttpclient
+torch
 rdkit-pypi
+deepchem
+flake8
+pytest
