@@ -72,11 +72,11 @@ class AntiviralGNN(nn.Module):
         return out.squeeze(-1)
 
 # Hyperparameters
-LEARNING_RATE= 3e-4
-BATCH_SIZE= 102
+LEARNING_RATE= 4e-4
+BATCH_SIZE= 109
 WEIGHT_DECAY= 1e-5
-SCHEDULER_PATIENCE= 8
-TIME_BUDGET= 1526 # 20 minutes
+SCHEDULER_PATIENCE = 8
+TIME_BUDGET= 1325 # 20 minutes
 DESCRIPTION = "4-layer GATv2 baseline test"
 
 ## END OF AGENT MODIFIABLE SECTION ##

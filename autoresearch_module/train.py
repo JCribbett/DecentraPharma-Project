@@ -38,7 +38,7 @@ class MolecularModel(nn.Module):
         return self.net(x)
 
 # Hyperparameters
-LEARNING_RATE = 5e-4
+LEARNING_RATE = 4.84e-04
 BATCH_SIZE = 64
 WEIGHT_DECAY = 1e-3
 
