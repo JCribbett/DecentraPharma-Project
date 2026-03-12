@@ -1,0 +1,6 @@
+timestamp	val_auc	num_params	description
+2026-03-12T08:19:44.025456	0.7324	68993	GCN 3-layer 128-dim mean+max pool
+2026-03-12T08:20:37.784879	0.8044	68993	GCN 3-layer 128-dim mean+max pool
+2026-03-12T08:21:47.652322	0.8089	68993	GCN 3-layer 128-dim mean+max pool
+2026-03-12T08:23:14.928455	0.8118	68993	GCN 3-layer 128-dim mean+max pool
+2026-03-12T08:47:03.980326	0.8053	68993	GCN 3-layer 128-dim mean+max pool

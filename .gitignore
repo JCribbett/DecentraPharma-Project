@@ -13,3 +13,10 @@ venv/
 # OS generated files
 .DS_Store
 Thumbs.db
+
+# Data and Models
+*.pt
+*.pth
+autoresearch_module/data/
+autoresearch_module/best_gnn_model.pt
+
