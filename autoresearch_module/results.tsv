@@ -1,0 +1,2 @@
+commit	val_auc	num_params	status	description
+baseline	0.865700	1180673	keep	baseline MLP (512-256) 15s test run

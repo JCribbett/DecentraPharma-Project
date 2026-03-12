@@ -10,8 +10,8 @@ from sklearn.metrics import roc_auc_score
 
 # Constants
 DATA_DIR = 'data'
-DATASET_URL = 'https://deepchemdata.s3-us-west-1.amazonaws.com/datasets/bbbp.csv'
-DATASET_PATH = os.path.join(DATA_DIR, 'bbbp.csv')
+DATASET_URL = 'https://deepchemdata.s3-us-west-1.amazonaws.com/datasets/BBBP.csv'
+DATASET_PATH = os.path.join(DATA_DIR, 'BBBP.csv')
 TIME_BUDGET = 300 # 5 minutes
 FINGERPRINT_SIZE = 2048
 
