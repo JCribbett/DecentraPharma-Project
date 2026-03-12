@@ -1,30 +1,41 @@
 # Example: Model for predicting molecular properties
 from typing import List, Dict, Any, Union
-import torch
-import torch.nn as nn
-import torch.optim as optim
 import numpy as np
 
 from src.core.models import BaseModel
 from src.utils.cheminformatics import MoleculeHandler
 
-class SimpleQSAR(nn.Module):
-    """A simple Multi-Layer Perceptron for QSAR prediction."""
-    def __init__(self, input_size=1024, hidden_size=128, output_size=1):
-        super(SimpleQSAR, self).__init__()
-        self.network = nn.Sequential(
-            nn.Linear(input_size, hidden_size),
-            nn.ReLU(),
-            nn.Dropout(0.2),
-            nn.Linear(hidden_size, output_size)
-        )
+try:
+    import torch
+    import torch.nn as nn
+    import torch.optim as optim
+    TORCH_AVAILABLE = True
+except ImportError:
+    TORCH_AVAILABLE = False
+    torch = None
 
-    def forward(self, x):
-        return self.network(x)
+if TORCH_AVAILABLE:
+    class SimpleQSAR(nn.Module):
+        """A simple Multi-Layer Perceptron for QSAR prediction."""
+        def __init__(self, input_size=1024, hidden_size=128, output_size=1):
+            super(SimpleQSAR, self).__init__()
+            self.network = nn.Sequential(
+                nn.Linear(input_size, hidden_size),
+                nn.ReLU(),
+                nn.Dropout(0.2),
+                nn.Linear(hidden_size, output_size)
+            )
+
+        def forward(self, x):
+            return self.network(x)
+else:
+    SimpleQSAR = None
 
 class DrugDiscoveryModel(BaseModel):
     def __init__(self, input_size=1024, learning_rate=0.001):
         super().__init__()
+        if not TORCH_AVAILABLE:
+            raise ImportError("PyTorch is not installed. Please install 'torch' to use DrugDiscoveryModel.")
         self.input_size = input_size
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model = SimpleQSAR(input_size=input_size).to(self.device)
@@ -32,7 +43,7 @@ class DrugDiscoveryModel(BaseModel):
         self.criterion = nn.MSELoss()
         self.molecule_handler = MoleculeHandler()
 
-    def _featurize(self, smiles_list: List[str]) -> torch.Tensor:
+    def _featurize(self, smiles_list: List[str]) -> Any:
         """Converts SMILES strings to tensor fingerprints."""
         features = []
         for smiles in smiles_list:
