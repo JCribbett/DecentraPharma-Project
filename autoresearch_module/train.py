@@ -1,7 +1,7 @@
 """
 DecentraPharma Autoresearch training script.
 Adapted from karpathy/autoresearch for Molecular Property Prediction.
-Task: Blood-Brain Barrier Penetration (BBBP) classification.
+Task: HIV Inhibition classification (Antiviral Research).
 Metric: ROC-AUC (Higher is better)
 """
 
@@ -22,12 +22,14 @@ class MolecularModel(nn.Module):
     def __init__(self, input_size):
         super(MolecularModel, self).__init__()
         # Simple MLP architecture for the agent to optimize
+        # Note: HIV dataset is imbalanced (~3.5% active)
         self.net = nn.Sequential(
             nn.Linear(input_size, 512),
             nn.ReLU(),
-            nn.Dropout(0.2),
+            nn.Dropout(0.5),
             nn.Linear(512, 256),
             nn.ReLU(),
+            nn.Dropout(0.3),
             nn.Linear(256, 1) # Output logit for binary classification
         )
 
@@ -37,7 +39,7 @@ class MolecularModel(nn.Module):
 # Hyperparameters
 LEARNING_RATE = 1e-3
 BATCH_SIZE = 64
-WEIGHT_DECAY = 1e-5
+WEIGHT_DECAY = 1e-4
 
 ## END OF AGENT MODIFIABLE SECTION ##
 
@@ -46,7 +48,7 @@ WEIGHT_DECAY = 1e-5
 # ---------------------------------------------------------------------------
 
 def train():
-    print("Starting DecentraPharma Autoresearch...")
+    print("Starting DecentraPharma Autoresearch (Antiviral Research)...")
     X_train, y_train, X_val, y_val = prepare_data()
     
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -55,7 +57,14 @@ def train():
     
     model = MolecularModel(FINGERPRINT_SIZE).to(device)
     optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
-    criterion = nn.BCEWithLogitsLoss()
+    
+    # Calculate positive weight for imbalanced classes
+    n_pos = y_train.sum()
+    n_neg = len(y_train) - n_pos
+    pos_weight = (n_neg / n_pos).to(device)
+    print(f"Using pos_weight: {pos_weight:.2f} for imbalanced classes")
+    
+    criterion = nn.BCEWithLogitsLoss(pos_weight=pos_weight)
     
     start_time = time.time()
     step = 0

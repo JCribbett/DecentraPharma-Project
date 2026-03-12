@@ -1,2 +1,5 @@
 commit	val_auc	num_params	status	description
 baseline	0.865700	1180673	keep	baseline MLP (512-256) 15s test run
+exp1	0.803946	1182209	discard	add BatchNorm after linear layers
+exp2	0.823347	1180673	discard	GELU activation + AdamW + weight_decay=1e-4
+exp3	0.874048	1180673	keep	higher dropout (0.5/0.3) + weight_decay=1e-3
