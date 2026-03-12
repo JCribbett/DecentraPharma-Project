@@ -21,25 +21,26 @@ from prepare import prepare_data, evaluate_metric, TIME_BUDGET, FINGERPRINT_SIZE
 class MolecularModel(nn.Module):
     def __init__(self, input_size):
         super(MolecularModel, self).__init__()
-        # Simple MLP architecture for the agent to optimize
-        # Note: HIV dataset is imbalanced (~3.5% active)
+        # Deeper MLP with LayerNorm and GELU for better representation
         self.net = nn.Sequential(
-            nn.Linear(input_size, 512),
-            nn.ReLU(),
+            nn.Linear(input_size, 1024),
+            nn.LayerNorm(1024),
+            nn.GELU(),
             nn.Dropout(0.5),
-            nn.Linear(512, 256),
-            nn.ReLU(),
+            nn.Linear(1024, 512),
+            nn.LayerNorm(512),
+            nn.GELU(),
             nn.Dropout(0.3),
-            nn.Linear(256, 1) # Output logit for binary classification
+            nn.Linear(512, 1) # Output logit for binary classification
         )
 
     def forward(self, x):
         return self.net(x)
 
 # Hyperparameters
-LEARNING_RATE = 1e-3
+LEARNING_RATE = 5e-4
 BATCH_SIZE = 64
-WEIGHT_DECAY = 1e-4
+WEIGHT_DECAY = 1e-3
 
 ## END OF AGENT MODIFIABLE SECTION ##
 
@@ -56,7 +57,7 @@ def train():
     X_val, y_val = X_val.to(device), y_val.to(device)
     
     model = MolecularModel(FINGERPRINT_SIZE).to(device)
-    optimizer = optim.Adam(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
+    optimizer = optim.AdamW(model.parameters(), lr=LEARNING_RATE, weight_decay=WEIGHT_DECAY)
     
     # Calculate positive weight for imbalanced classes
     n_pos = y_train.sum()
