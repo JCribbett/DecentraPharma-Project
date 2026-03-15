@@ -15,6 +15,9 @@ from torch_geometric.nn import GATv2Conv, global_mean_pool, global_max_pool
 from torch_geometric.loader import DataLoader
 from prepare_graph import prepare_graph_data, evaluate_graph_metric, NUM_ATOM_FEATURES, NUM_BOND_FEATURES
 
+import warnings
+warnings.filterwarnings("ignore", message=".*scatter.*")
+
 # ---------------------------------------------------------------------------
 # GNN Model
 # ---------------------------------------------------------------------------
@@ -23,94 +26,94 @@ from prepare_graph import prepare_graph_data, evaluate_graph_metric, NUM_ATOM_FE
 
 class AntiviralGNN(nn.Module):
     """
-    Residual Graph Attention Network (ResGAT)
-    - Input projection to 256 dim
-    - 3 layers of GATv2 with Residual Connections, BN, and Dropout
-    - Global Mean+Max Pooling
-    - Deeper MLP Classifier
+    Robust GATv2 Architecture with Input Projection and Residual Connections.
+    Uses 256 hidden units, 3 layers, and edge features.
     """
     def __init__(self, num_node_features=NUM_ATOM_FEATURES, num_edge_features=NUM_BOND_FEATURES):
         super(AntiviralGNN, self).__init__()
 
         hidden_dim = 256
         heads = 4
-        self.dropout_rate = 0.3
-
-        # Project initial node features to hidden dimension
-        self.node_encoder = nn.Linear(num_node_features, hidden_dim)
-
-        # Graph attention layers
-        # GATv2Conv output size is heads * out_channels
+        
+        # Input projection to transform node features to hidden dimension
+        self.atom_encoder = nn.Linear(num_node_features, hidden_dim)
+        
+        # GATv2 Layers
+        # concat=True -> output dim is heads * (hidden_dim // heads) = hidden_dim
+        # We use edge_dim to utilize bond features
         self.conv1 = GATv2Conv(hidden_dim, hidden_dim // heads, heads=heads, edge_dim=num_edge_features, concat=True)
         self.conv2 = GATv2Conv(hidden_dim, hidden_dim // heads, heads=heads, edge_dim=num_edge_features, concat=True)
         self.conv3 = GATv2Conv(hidden_dim, hidden_dim // heads, heads=heads, edge_dim=num_edge_features, concat=True)
 
-        # Batch normalization for graph layers
+        # Batch Normalization for stability
         self.bn1 = nn.BatchNorm1d(hidden_dim)
         self.bn2 = nn.BatchNorm1d(hidden_dim)
         self.bn3 = nn.BatchNorm1d(hidden_dim)
 
-        # MLP classifier head (after pooling)
+        # MLP classifier head (hidden_dim * 2 because of cat(mean, max))
         self.classifier = nn.Sequential(
             nn.Linear(hidden_dim * 2, hidden_dim),
             nn.BatchNorm1d(hidden_dim),
             nn.ReLU(),
-            nn.Dropout(0.4),
+            nn.Dropout(0.3),
             nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.BatchNorm1d(hidden_dim // 2),
             nn.ReLU(),
-            nn.Dropout(0.4),
+            nn.Dropout(0.3),
             nn.Linear(hidden_dim // 2, 1)
         )
 
     def forward(self, x, edge_index, batch, edge_attr=None, return_attention_weights=False):
-        # Initial projection
-        x = self.node_encoder(x)
-        x = F.elu(x)
-        x = F.dropout(x, p=0.1, training=self.training)
+        # 1. Project Input
+        x = self.atom_encoder(x)
+        x = F.relu(x)
 
-        # Block 1
-        x_residual = x
+        # 2. GATv2 Layer 1 + Residual
+        x_in = x
         x = self.conv1(x, edge_index, edge_attr=edge_attr)
         x = self.bn1(x)
-        x = F.elu(x)
-        x = F.dropout(x, p=self.dropout_rate, training=self.training)
-        x = x + x_residual
+        x = F.relu(x)
+        x = F.dropout(x, p=0.1, training=self.training)
+        x = x + x_in 
 
-        # Block 2
-        x_residual = x
+        # 3. GATv2 Layer 2 + Residual
+        x_in = x
         x = self.conv2(x, edge_index, edge_attr=edge_attr)
         x = self.bn2(x)
-        x = F.elu(x)
-        x = F.dropout(x, p=self.dropout_rate, training=self.training)
-        x = x + x_residual
+        x = F.relu(x)
+        x = F.dropout(x, p=0.1, training=self.training)
+        x = x + x_in 
 
-        # Block 3
-        x_residual = x
+        # 4. GATv2 Layer 3 + Residual
+        x_in = x
         x = self.conv3(x, edge_index, edge_attr=edge_attr)
         x = self.bn3(x)
-        x = F.elu(x)
-        x = F.dropout(x, p=self.dropout_rate, training=self.training)
-        x = x + x_residual
+        x = F.relu(x)
+        x = F.dropout(x, p=0.1, training=self.training)
+        x = x + x_in 
 
-        # Global pooling (mean + max concatenation)
+        # 5. Global Pooling (Mean + Max)
         x_mean = global_mean_pool(x, batch)
         x_max = global_max_pool(x, batch)
-        x = torch.cat([x_mean, x_max], dim=1)
+        x_pool = torch.cat([x_mean, x_max], dim=1)
 
-        # Classify
-        out = self.classifier(x)
+        # 6. Classification
+        out = self.classifier(x_pool)
+        
         if return_attention_weights:
-            return out.squeeze(-1), [] # Attention weights not captured for speed
+            # Placeholder if attention weights are requested, though not returned here
+            # to keep signature compatible
+            return out.squeeze(-1), []
             
         return out.squeeze(-1)
 
 # Hyperparameters
-LEARNING_RATE= 0.0005
-BATCH_SIZE= 128
-WEIGHT_DECAY= 1e-5
-SCHEDULER_PATIENCE = 5
-TIME_BUDGET= 1325
-DESCRIPTION = "ResGAT-256 (3 layers) with Input Projection"
+LEARNING_RATE = 0.0005
+BATCH_SIZE = 256
+WEIGHT_DECAY = 1e-4
+SCHEDULER_PATIENCE = 10
+TIME_BUDGET = 300
+DESCRIPTION = "ResGATv2-256 (3 layers) with aligned residuals and BN"
 
 ## END OF AGENT MODIFIABLE SECTION ##
 
