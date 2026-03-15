@@ -115,10 +115,14 @@ def main():
     checkpoint = load_checkpoint(CHECKPOINT_FILE)
     start_epoch = 0
     if checkpoint:
-        model.load_state_dict(checkpoint['state_dict'])
-        if 'optimizer' in checkpoint:
-            optimizer.load_state_dict(checkpoint['optimizer'])
-        start_epoch = checkpoint.get('epoch', 0)
+        try:
+            model.load_state_dict(checkpoint['state_dict'])
+            if 'optimizer' in checkpoint:
+                optimizer.load_state_dict(checkpoint['optimizer'])
+            start_epoch = checkpoint.get('epoch', 0)
+        except RuntimeError as e:
+            print(f"⚠️ Architecture mismatch detected. Ignoring old checkpoint and starting fresh.")
+            start_epoch = 0
 
     # --- Training Loop ---
     print("Starting training loop...")

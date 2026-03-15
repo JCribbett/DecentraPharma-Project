@@ -1,3 +1,7 @@
 {
-    "best_gnn_model.pt": "QmcqEzoZPAqVWFSymDz5yyr6HYmWKrsRAm6A49UpveysE7"
+    "best_gnn_model.pt": "QmcqEzoZPAqVWFSymDz5yyr6HYmWKrsRAm6A49UpveysE7",
+    "smiles_generator_rl.pth": "QmaedGAeCmNscu1ipTJ1qsjCXk9M2MezH6JJLLh4KneJGg",
+    "virtual_screening_hits.csv": "Qmd7ipPoyAGRQtShoiqYdyj5RTLKoUtiRuNVBEHJGjMafJ",
+    "generated_hits.png": "QmeXUCC4eLy51bXxSM7AAGbiedpnMu8GL5ydcmqqygKdYZ",
+    "rl_generated_hits.csv": "QmWKMDTMb77C9ZCQcuVEJDvegoiLh9SG4PY1G452NUSwrc"
 }

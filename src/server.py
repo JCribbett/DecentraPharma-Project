@@ -20,6 +20,30 @@ pending_tasks = [
 ]
 completed_tasks = []
 
+# Dynamically load De Novo AI hits from the RL generator
+RL_HITS_FILE = os.path.join(os.path.dirname(__file__), '..', 'autoresearch_module', 'rl_generated_hits.csv')
+if os.path.exists(RL_HITS_FILE):
+    logging.info(f"Loading De Novo molecules from {RL_HITS_FILE}...")
+    with open(RL_HITS_FILE, 'r', encoding='utf-8') as f:
+        reader = csv.DictReader(f)
+        for idx, row in enumerate(reader):
+            pending_tasks.append({
+                "task_id": 20000 + idx,
+                "type": "3d_docking",
+                "smiles": row['smiles']
+            })
+
+# Dynamically load Virtual Screening hits as a secondary fallback queue
+VS_HITS_FILE = os.path.join(os.path.dirname(__file__), '..', 'autoresearch_module', 'virtual_screening_hits.csv')
+fallback_tasks = []
+if os.path.exists(VS_HITS_FILE):
+    logging.info(f"Loading Virtual Screening molecules from {VS_HITS_FILE} for fallback queue...")
+    with open(VS_HITS_FILE, 'r', encoding='utf-8') as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            if 'smiles' in row:
+                fallback_tasks.append(row['smiles'])
+
 CSV_FILE = "decentrapharma_results.csv"
 if not os.path.exists(CSV_FILE):
     with open(CSV_FILE, mode='w', newline='', encoding='utf-8') as f:
@@ -39,12 +63,20 @@ class TaskResult(BaseModel):
 @app.get("/task")
 def get_task():
     if not pending_tasks:
-        # If the queue is empty, generate random placeholder tasks to keep the network busy
-        return {
-            "task_id": random.randint(5000, 9999),
-            "type": random.choice(["2d_scoring", "3d_docking"]),
-            "smiles": random.choice(["CC(=O)OC1=CC=CC=C1C(=O)O", "CN1C=NC2=C1C(=O)N(C(=O)N2C)C"])
-        }
+        # If the queue is empty, pull from the virtual screening fallback queue
+        if fallback_tasks:
+            return {
+                "task_id": random.randint(30000, 99999),
+                "type": "3d_docking",
+                "smiles": fallback_tasks.pop(0)
+            }
+        else:
+            # Infinite placeholder fallback if both queues are completely empty
+            return {
+                "task_id": random.randint(5000, 9999),
+                "type": random.choice(["2d_scoring", "3d_docking"]),
+                "smiles": random.choice(["CC(=O)OC1=CC=CC=C1C(=O)O", "CN1C=NC2=C1C(=O)N(C(=O)N2C)C"])
+            }
     return pending_tasks.pop(0)
 
 @app.post("/result")

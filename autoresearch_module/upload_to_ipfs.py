@@ -49,7 +49,8 @@ def main():
         "best_gnn_model.pt",
         "smiles_generator_rl.pth",
         "virtual_screening_hits.csv",
-        "generated_hits.png"
+        "generated_hits.png",
+        "rl_generated_hits.csv"
     ]
     
     script_dir = os.path.dirname(os.path.abspath(__file__))

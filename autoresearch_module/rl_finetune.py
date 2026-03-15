@@ -92,6 +92,21 @@ def rl_finetune():
     max_len = 100
     entropy_weight = 0.02 # Hyperparameter to encourage exploration
     
+    hall_of_fame = {} # Tracks the best molecules across all epochs
+    
+    # Load previous Hall of Fame if it exists to preserve past discoveries
+    if os.path.exists("rl_generated_hits.csv"):
+        try:
+            existing_df = pd.read_csv("rl_generated_hits.csv")
+            for _, row in existing_df.iterrows():
+                hall_of_fame[row['smiles']] = {
+                    "smiles": row['smiles'], "hiv_prob": row['hiv_prob'], 
+                    "tox_prob": row['tox_prob'], "net_reward": row['net_reward']
+                }
+            print(f"Loaded {len(hall_of_fame)} previously discovered molecules into the Hall of Fame.")
+        except Exception as e:
+            print(f"Could not load existing Hall of Fame: {e}")
+
     print("\nStarting RL Fine-tuning (REINFORCE algorithm)...")
     for epoch in range(epochs):
         rnn.train()
@@ -121,7 +136,7 @@ def rl_finetune():
                 input_seq = torch.tensor([[action.item()]]).to(device)
             
             smiles = ''.join(generated_chars)
-            reward, _, _ = get_reward(smiles, hiv_gnn, tox_gnn, device)
+            reward, p_hiv, p_tox = get_reward(smiles, hiv_gnn, tox_gnn, device)
             
             # Uniqueness penalty to prevent mode collapse
             if smiles in batch_smiles:
@@ -129,6 +144,10 @@ def rl_finetune():
             elif reward > 0:
                 batch_smiles.add(smiles)
                 unique_valid_mols += 1
+                
+                # Track best discoveries globally
+                if smiles not in hall_of_fame or reward > hall_of_fame[smiles]['net_reward']:
+                    hall_of_fame[smiles] = {"smiles": smiles, "hiv_prob": p_hiv, "tox_prob": p_tox, "net_reward": reward}
             
             # Calculate Policy Gradient Loss: -log(P(action)) * reward
             entropy_bonus = entropy_weight * sum(entropies)
@@ -143,25 +162,27 @@ def rl_finetune():
         avg_reward = batch_reward / batch_size
         print(f"Epoch {epoch+1:3d}/{epochs} | Avg Reward: {avg_reward:.4f} | Unique Valid: {unique_valid_mols:2d}/{batch_size}")
 
-    print("\n--- Testing RL-Tuned Generator ---")
-    new_smiles = generate_molecules(rnn, vocab, num_mols=5, temperature=0.8)
+    print("\n--- Top Molecules Discovered During RL ---")
+    best_mols = sorted(hall_of_fame.values(), key=lambda x: x["net_reward"], reverse=True)[:50]
     
     mols_to_draw = []
     draw_labels = []
     
-    for s in new_smiles:
-        rew, p_hiv, p_tox = get_reward(s, hiv_gnn, tox_gnn, device)
-        print(f"{s:<50} | HIV: {p_hiv:.4f} | Tox: {p_tox:.4f} | Net Reward: {rew:.4f}")
-        
-        mol = Chem.MolFromSmiles(s)
+    for hit in best_mols[:5]:
+        print(f"{hit['smiles']:<50} | HIV: {hit['hiv_prob']:.4f} | Tox: {hit['tox_prob']:.4f} | Net Reward: {hit['net_reward']:.4f}")
+        mol = Chem.MolFromSmiles(hit['smiles'])
         if mol is not None:
             mols_to_draw.append(mol)
-            draw_labels.append(f"Prob: {rew:.4f}")
+            draw_labels.append(f"Reward: {hit['net_reward']:.4f}")
             
     if mols_to_draw:
         img = Draw.MolsToGridImage(mols_to_draw, molsPerRow=min(5, len(mols_to_draw)), subImgSize=(300, 300), legends=draw_labels)
         img.save("generated_hits.png")
-        print(f"\nSaved 2D structures to 'generated_hits.png'")
+        print(f"\nSaved top 5 2D structures to 'generated_hits.png'")
+        
+    if best_mols:
+        pd.DataFrame(best_mols).to_csv("rl_generated_hits.csv", index=False)
+        print("Saved top 50 structures and scores to 'rl_generated_hits.csv'")
         
     torch.save(rnn.state_dict(), "smiles_generator_rl.pth")
     print("\nSaved RL-finetuned model to 'smiles_generator_rl.pth'")

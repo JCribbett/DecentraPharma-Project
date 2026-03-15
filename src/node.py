@@ -29,7 +29,7 @@ class Node:
         self.model_path = os.path.join(os.path.dirname(__file__), "downloaded_model.pt")
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model = None
-        self.server_url = "http://127.0.0.1:8000"
+        self.server_url = os.environ.get("DECENTRAPHARMA_SERVER_URL", "http://127.0.0.1:8000")
         
         logging.info(f"Node {self.node_id} booting up...")
         self.download_model()
