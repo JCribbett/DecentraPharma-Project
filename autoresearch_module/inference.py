@@ -10,12 +10,11 @@ RDLogger.DisableLog('rdApp.*')
 warnings.filterwarnings("ignore")
 
 from data_loader import mol_to_graph
-from model_hiv import AntiviralGNN
+from train_gnn import AntiviralGNN
 
-def predict(smiles_list, model_path, hidden_dim=64, dropout=0.2):
+def predict(smiles_list, model_path="best_gnn_model.pt"):
     # 1. Initialize the model architecture
-    # Note: hidden_dim and dropout must match what was used during training
-    model = AntiviralGNN(num_features=16, hidden_dim=hidden_dim, dropout=dropout, num_classes=1)
+    model = AntiviralGNN()
     
     # 2. Load the trained weights
     try:
@@ -52,7 +51,11 @@ def predict(smiles_list, model_path, hidden_dim=64, dropout=0.2):
         batch_data = next(iter(loader))
         
         with torch.no_grad():
-            out = model(batch_data)
+            try:
+                edge_attr = getattr(batch_data, 'edge_attr', None)
+                out = model(batch_data.x, batch_data.edge_index, batch_data.batch, edge_attr=edge_attr)
+            except TypeError:
+                out = model(batch_data.x, batch_data.edge_index, batch_data.batch)
             prob = torch.sigmoid(out).item()
             
         print(f"{smiles:<50} | {prob:.4f}")
@@ -60,8 +63,7 @@ def predict(smiles_list, model_path, hidden_dim=64, dropout=0.2):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run inference on unseen molecules using trained GNN models.")
     parser.add_argument("--smiles", nargs='+', required=True, help="One or more SMILES strings to test.")
-    parser.add_argument("--model", type=str, default="hiv_model_backup.pth", help="Path to the trained model weights (.pth or .pth.tar).")
-    parser.add_argument("--hidden_dim", type=int, default=64, help="Hidden dimension size of the trained model (default: 64).")
+    parser.add_argument("--model", type=str, default="best_gnn_model.pt", help="Path to the trained model weights (.pth or .pth.tar).")
     
     args = parser.parse_args()
-    predict(args.smiles, args.model, args.hidden_dim)
+    predict(args.smiles, args.model)

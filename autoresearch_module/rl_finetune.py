@@ -13,7 +13,8 @@ RDLogger.DisableLog('rdApp.*')
 warnings.filterwarnings("ignore")
 
 from smiles_generator import SMILESRNN, SMILESVocab, generate_molecules
-from model_hiv import AntiviralGNN
+from train_gnn import AntiviralGNN as HIV_GNN
+from model_hiv import AntiviralGNN as Tox_GNN
 from data_loader import mol_to_graph
 
 def load_vocab():
@@ -23,26 +24,36 @@ def load_vocab():
     active_smiles = df[df['HIV_active'] == 1]['smiles'].dropna().tolist()
     return SMILESVocab(active_smiles)
 
-def get_reward(smiles, gnn_model, device):
-    """Uses the GNN to score the generated molecule."""
+def get_reward(smiles, hiv_model, tox_model, device):
+    """Uses both GNNs to score the generated molecule for high HIV activity and low toxicity."""
     mol = Chem.MolFromSmiles(smiles)
     # Severe penalty for invalid chemical structures
     if mol is None:
-        return 0.0 
+        return 0.0, 0.0, 0.0
     
     data = mol_to_graph(mol)
     if data is None or data.x.numel() == 0:
-        return 0.0
+        return 0.0, 0.0, 0.0
     
     loader = DataLoader([data], batch_size=1)
     batch = next(iter(loader)).to(device)
     
     with torch.no_grad():
-        out = gnn_model(batch)
-        prob = torch.sigmoid(out).item()
+        # HIV Prediction (LLM Model)
+        try:
+            edge_attr = getattr(batch, 'edge_attr', None)
+            out_hiv = hiv_model(batch.x, batch.edge_index, batch.batch, edge_attr=edge_attr)
+        except TypeError:
+            out_hiv = hiv_model(batch.x, batch.edge_index, batch.batch)
+        prob_hiv = torch.sigmoid(out_hiv).item()
+        
+        # Toxicity Prediction (Baseline Model)
+        out_tox = tox_model(batch)
+        prob_tox = torch.sigmoid(out_tox).item()
     
-    # Reward is the probability of being active against HIV
-    return prob
+    # Multi-Objective Reward: High HIV activity minus Toxicity penalty
+    reward = max(0.0, prob_hiv - prob_tox)
+    return reward, prob_hiv, prob_tox
 
 def rl_finetune():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -56,15 +67,22 @@ def rl_finetune():
         print("Warning: smiles_generator.pth not found. Make sure you trained the generator first!")
         return
         
-    print("Loading Pre-trained GNN Oracle...")
-    gnn = AntiviralGNN(num_features=16, hidden_dim=64, dropout=0.2, num_classes=1).to(device)
-    if os.path.exists("hiv_model_backup.pth"):
-        checkpoint = torch.load("hiv_model_backup.pth", map_location=device, weights_only=False)
+    print("Loading Pre-trained HIV Oracle (Smart Version)...")
+    hiv_gnn = HIV_GNN().to(device)
+    if os.path.exists("best_gnn_model.pt"):
+        checkpoint = torch.load("best_gnn_model.pt", map_location=device, weights_only=True)
+        hiv_gnn.load_state_dict(checkpoint)
+    hiv_gnn.eval()
+
+    print("Loading Pre-trained Toxicity Oracle...")
+    tox_gnn = Tox_GNN(num_features=16, hidden_dim=64, dropout=0.2, num_classes=1).to(device)
+    if os.path.exists("tox_model_backup.pth"):
+        checkpoint = torch.load("tox_model_backup.pth", map_location=device, weights_only=False)
         if 'state_dict' in checkpoint:
-            gnn.load_state_dict(checkpoint['state_dict'])
+            tox_gnn.load_state_dict(checkpoint['state_dict'])
         else:
-            gnn.load_state_dict(checkpoint)
-    gnn.eval()
+            tox_gnn.load_state_dict(checkpoint)
+    tox_gnn.eval()
     
     # We use a smaller learning rate for fine-tuning
     optimizer = optim.Adam(rnn.parameters(), lr=5e-5)
@@ -103,7 +121,7 @@ def rl_finetune():
                 input_seq = torch.tensor([[action.item()]]).to(device)
             
             smiles = ''.join(generated_chars)
-            reward = get_reward(smiles, gnn, device)
+            reward, _, _ = get_reward(smiles, hiv_gnn, tox_gnn, device)
             
             # Uniqueness penalty to prevent mode collapse
             if smiles in batch_smiles:
@@ -132,8 +150,8 @@ def rl_finetune():
     draw_labels = []
     
     for s in new_smiles:
-        rew = get_reward(s, gnn, device)
-        print(f"{s:<50} | Predicted Active Prob: {rew:.4f}")
+        rew, p_hiv, p_tox = get_reward(s, hiv_gnn, tox_gnn, device)
+        print(f"{s:<50} | HIV: {p_hiv:.4f} | Tox: {p_tox:.4f} | Net Reward: {rew:.4f}")
         
         mol = Chem.MolFromSmiles(s)
         if mol is not None:

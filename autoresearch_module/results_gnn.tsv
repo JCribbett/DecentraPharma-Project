@@ -1,0 +1,4 @@
+timestamp	val_auc	num_params	description
+2026-03-15T10:51:42.097587	0.754185	571649	ResGAT-256 (3 layers) with Input Projection
+2026-03-15T10:58:04.749433	0.825643	571905	ResGATv2-256 (3 layers) with aligned residuals and BN
+2026-03-15T11:04:26.473257	0.811038	1358017	JK-ResGATv2-192 (4 layers) with Jumping Knowledge

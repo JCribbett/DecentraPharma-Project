@@ -11,9 +11,9 @@ RDLogger.DisableLog('rdApp.*')
 warnings.filterwarnings("ignore")
 
 from data_loader import mol_to_graph, TOX_DATA_URL
-from model_hiv import AntiviralGNN
+from train_gnn import AntiviralGNN
 
-def run_screen(model_path="hiv_model_backup.pth", top_k=20):
+def run_screen(model_path="best_gnn_model.pt", top_k=20):
     print(f"--- DecentraPharma Virtual Screening ---")
     print(f"Downloading screening library from {TOX_DATA_URL}...")
     
@@ -28,7 +28,7 @@ def run_screen(model_path="hiv_model_backup.pth", top_k=20):
     print(f"Library loaded. Screening {len(df)} unique compounds...")
 
     # Initialize your HIV Model
-    model = AntiviralGNN(num_features=16, hidden_dim=64, dropout=0.2, num_classes=1)
+    model = AntiviralGNN()
     try:
         checkpoint = torch.load(model_path, map_location='cpu', weights_only=False)
         if 'state_dict' in checkpoint:
@@ -58,7 +58,11 @@ def run_screen(model_path="hiv_model_backup.pth", top_k=20):
         batch = next(iter(loader))
         
         with torch.no_grad():
-            out = model(batch)
+            try:
+                edge_attr = getattr(batch, 'edge_attr', None)
+                out = model(batch.x, batch.edge_index, batch.batch, edge_attr=edge_attr)
+            except TypeError:
+                out = model(batch.x, batch.edge_index, batch.batch)
             prob = torch.sigmoid(out).item()
             
         results.append({
