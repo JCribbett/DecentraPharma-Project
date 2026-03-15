@@ -67,7 +67,7 @@ def call_llm(prompt, current_code):
                 url="https://openrouter.ai/api/v1/chat/completions",
                 headers={"Authorization": f"Bearer {openrouter_key}"},
                 json={
-                    "model": "google/gemini-1.5-pro", # You can change this to anthropic/claude-3.5-sonnet, etc.
+                    "model": "google/gemini-3-pro-preview", # Using Claude 3.5 Sonnet (excellent for coding)
                     "messages": [
                         {"role": "system", "content": prompt},
                         {"role": "user", "content": f"Here is the current code:\n```python\n{current_code}\n```"}
