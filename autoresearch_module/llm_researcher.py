@@ -154,6 +154,10 @@ def main(script_to_edit, program_instructions_file, results_file):
         imports_section = extract_section(full_code, imports_marker_start, imports_marker_end)
         modifiable_section = extract_section(full_code, mod_marker_start, mod_marker_end)
         
+        if modifiable_section is None:
+            print(f"❌ CRITICAL: Could not find '{mod_marker_start}' in {script_to_edit}")
+            sys.exit(1)
+
         # Read recent results to give context to the LLM
         recent_history = ""
         if os.path.exists(results_file):

@@ -4,20 +4,55 @@ from torch_geometric.loader import DataLoader
 import os
 import time
 
+## START OF AGENT IMPORTS ##
+from torch_geometric.nn import GCNConv, global_mean_pool, global_max_pool
+import torch.nn.functional as F
+## END OF AGENT IMPORTS ##
+
 # Assume data_loader.py and model_tox.py are in the same directory or accessible
 from data_loader import prepare_tox_data # Assuming this loads Tox21 data
-from model_hiv import AntiviralGNN
 from training_utils import train_epoch, evaluate, save_checkpoint, load_checkpoint, get_best_score, save_results
 
+## START OF AGENT MODIFIABLE SECTION ##
 # Configuration Parameters (these will be tuned by the optimizer)
 HIDDEN_DIM = 64
 DROPOUT = 0.2
 LEARNING_RATE = 3e-4
-BATCH_SIZE = 109
+BATCH_SIZE = 128
 WEIGHT_DECAY = 1e-5
 SCHEDULER_PATIENCE = 7
 TIME_BUDGET = 1325 # seconds
 DESCRIPTION = "Tox GNN Baseline"
+
+class AntiviralGNN(nn.Module):
+    def __init__(self, num_features=16, hidden_dim=64, dropout=0.2, num_classes=1):
+        super(AntiviralGNN, self).__init__()
+        self.dropout = nn.Dropout(dropout)
+
+        self.conv1 = GCNConv(num_features, hidden_dim)
+        self.conv2 = GCNConv(hidden_dim, hidden_dim)
+
+        self.classifier = nn.Sequential(
+            nn.Linear(hidden_dim * 2, hidden_dim),
+            nn.ReLU(),
+            self.dropout,
+            nn.Linear(hidden_dim, num_classes)
+        )
+
+    def forward(self, data):
+        x, edge_index, batch = data.x, data.edge_index, data.batch
+
+        x = F.relu(self.conv1(x, edge_index))
+        x = F.relu(self.conv2(x, edge_index))
+
+        mean_pool = global_mean_pool(x, batch)
+        max_pool = global_max_pool(x, batch)
+        
+        pooled_x = torch.cat([mean_pool, max_pool], dim=1)
+
+        out = self.classifier(pooled_x)
+        return out
+## END OF AGENT MODIFIABLE SECTION ##
 
 # --- File Paths ---
 RESULTS_FILE = "results_tox.tsv"
@@ -36,7 +71,7 @@ def main():
 
     # --- Initialize Model ---
     print("Initializing Tox GNN model...")
-    model = AntiviralGNN(num_features=NUM_FEATURES, hidden_dim=HIDDEN_DIM, dropout=DROPOUT, num_classes=NUM_CLASSES_TOX)
+    model = AntiviralGNN()
     
     # Count parameters
     num_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
