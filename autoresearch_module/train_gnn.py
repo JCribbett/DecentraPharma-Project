@@ -35,34 +35,38 @@ warnings.filterwarnings("ignore", message=".*scatter.*")
 
 class AntiviralGNN(nn.Module):
     """
-    GINE-256 with Set2Set Pooling (LSTM Readout).
+    GINE-256 with Virtual Node and Set2Set Pooling.
     
-    Rationale:
-    1. GINEConv: Explicitly models edge features (bonds) within the aggregation, crucial for chemistry.
-    2. Deep Residual Architecture: 5 layers with residuals allows learning complex substructures.
-    3. Set2Set Pooling: Replaces static mean/max pooling with an LSTM-based mechanism 
-       that processes the set of atoms to produce a graph embedding. This is often SOTA for molecules.
-    4. Regularization: Higher dropout (0.4) to combat overfitting on the imbalanced HIV dataset.
+    Architecture:
+    1. GINEConv: Captures graph structure and edge features (chemically vital).
+    2. Virtual Node: Adds a global "node" connected to all atoms to improve information flow 
+       and capture long-range dependencies (crucial for macro-features).
+    3. Set2Set Pooling: Learns an order-invariant aggregation of atom embeddings.
+    4. Residuals & BN: Deep network stability.
     """
     def __init__(self, num_node_features=NUM_ATOM_FEATURES, num_edge_features=NUM_BOND_FEATURES):
         super(AntiviralGNN, self).__init__()
 
         hidden_dim = 256
         num_layers = 5
-        dropout_rate = 0.4
+        dropout_rate = 0.5
         
         self.dropout_rate = dropout_rate
+        self.num_layers = num_layers
         
         # Encoders for atoms and bonds
         self.atom_encoder = nn.Linear(num_node_features, hidden_dim)
         self.bond_encoder = nn.Linear(num_edge_features, hidden_dim)
         
+        # Virtual Node Embedding (one learnt vector shared across all graphs initially)
+        self.virtual_node_embedding = nn.Embedding(1, hidden_dim)
+        
         self.convs = nn.ModuleList()
         self.bns = nn.ModuleList()
+        self.vn_mlps = nn.ModuleList()
         
         for _ in range(num_layers):
-            # MLP for GINE: Hidden -> 2*Hidden -> Hidden
-            # The MLP is applied after aggregating neighbors + edge features
+            # GINE MLP: Hidden -> 2*Hidden -> Hidden
             nn_blk = nn.Sequential(
                 nn.Linear(hidden_dim, hidden_dim * 2),
                 nn.BatchNorm1d(hidden_dim * 2),
@@ -70,17 +74,23 @@ class AntiviralGNN(nn.Module):
                 nn.Dropout(p=dropout_rate), 
                 nn.Linear(hidden_dim * 2, hidden_dim)
             )
-            # train_eps=True lets the model learn to distinguish center node vs neighbors
             self.convs.append(GINEConv(nn_blk, train_eps=True))
             self.bns.append(nn.BatchNorm1d(hidden_dim))
+            
+            # Virtual Node Update MLP
+            self.vn_mlps.append(nn.Sequential(
+                nn.Linear(hidden_dim, hidden_dim),
+                nn.BatchNorm1d(hidden_dim),
+                nn.ReLU(),
+                nn.Dropout(p=dropout_rate),
+                nn.Linear(hidden_dim, hidden_dim)
+            ))
 
-        # Set2Set Pooling: Maps node set to graph embedding
-        # processing_steps=3 is standard for molecules
-        # Output size is 2 * hidden_dim
+        # Set2Set Pooling
         self.pooling = Set2Set(hidden_dim, processing_steps=3, num_layers=1)
 
-        # Classifier head
-        # Input dim is 2 * hidden_dim because Set2Set concatenates q_t and r_t (LSTM states)
+        # Classifier
+        # Input dim is 2 * hidden_dim due to Set2Set
         self.classifier = nn.Sequential(
             nn.Linear(2 * hidden_dim, hidden_dim),
             nn.BatchNorm1d(hidden_dim),
@@ -99,23 +109,40 @@ class AntiviralGNN(nn.Module):
         if edge_attr is not None:
             edge_attr = self.bond_encoder(edge_attr)
         
-        # 2. Message Passing
+        # Initialize Virtual Node for the batch
+        # vx: (1, hidden) -> vx_batch: (batch_size, hidden)
+        batch_size = batch.max().item() + 1
+        vx = self.virtual_node_embedding.weight
+        vx_batch = vx.expand(batch_size, -1).clone() # Clone to allow inplace updates in loop
+
+        # 2. Message Passing with Virtual Node
         for i, conv in enumerate(self.convs):
+            # A. Add Virtual Node info to atoms
+            # Broadcast VN state to all atoms in the corresponding graph
+            x = x + vx_batch[batch]
+            
             x_in = x
             
-            # GINE update
-            # Note: GINEConv expects edge_attr to be same dim as x (handled by encoders above)
+            # B. Graph Convolution (GINE)
             x = conv(x, edge_index, edge_attr=edge_attr)
-            
-            # Batch Norm + Act + Dropout
             x = self.bns[i](x)
             x = F.relu(x)
             x = F.dropout(x, p=self.dropout_rate, training=self.training)
             
-            # Residual Connection
+            # Residual
             x = x + x_in
+            
+            # C. Update Virtual Node
+            # Aggregate atom representations back to graph level (Sum pooling)
+            # We use the updated x for this aggregation
+            aggr_x = global_add_pool(x, batch)
+            
+            # Update VN state: Old_VN + MLP(Aggregated_Atoms)
+            vn_delta = self.vn_mlps[i](aggr_x)
+            vx_batch = vx_batch + F.dropout(vn_delta, p=self.dropout_rate, training=self.training)
 
         # 3. Pooling (Set2Set)
+        # Using atomic representations for final readout (standard practice)
         x_graph = self.pooling(x, batch)
         
         # 4. Classification
@@ -127,12 +154,12 @@ class AntiviralGNN(nn.Module):
         return out.squeeze(-1)
 
 # Hyperparameters
-LEARNING_RATE = 0.0005  # Reduced LR for stability with Set2Set
-BATCH_SIZE = 128        # Smaller batch size to improve generalization
-WEIGHT_DECAY = 1e-4     # L2 Regularization
+LEARNING_RATE = 0.001   # Bumped slightly for Virtual Node convergence
+BATCH_SIZE = 128
+WEIGHT_DECAY = 1e-5     # Reduced slightly as dropout is doing heavy lifting
 SCHEDULER_PATIENCE = 5
 TIME_BUDGET = 900
-DESCRIPTION = "GINE-256 (5 layers) + Set2Set + Dropout 0.4"
+DESCRIPTION = "GINE-256 (5 layers) + Virtual Node + Set2Set + Dropout 0.5"
 
 ## END OF AGENT MODIFIABLE SECTION ##
 
