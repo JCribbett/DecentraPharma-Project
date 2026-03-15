@@ -14,6 +14,16 @@ SCRIPT_TO_EDIT = os.path.join(SCRIPT_DIR, "train_gnn.py")
 RESULTS_FILE = os.path.join(SCRIPT_DIR, "results_gnn.tsv")
 PROGRAM_INSTRUCTIONS = os.path.join(SCRIPT_DIR, "program_gnn.md")
 
+def load_env():
+    env_path = os.path.join(SCRIPT_DIR, ".env")
+    if os.path.exists(env_path):
+        with open(env_path, "r") as f:
+            for line in f:
+                line = line.strip()
+                if line and not line.startswith("#") and "=" in line:
+                    key, val = line.split("=", 1)
+                    os.environ[key.strip()] = val.strip().strip("'\"")
+
 def get_file_content(filepath):
     with open(filepath, "r") as f:
         return f.read()
@@ -108,6 +118,9 @@ def get_best_score():
         return -float('inf')
 
 def main():
+    # Load environment variables from .env file if it exists
+    load_env()
+    
     print("🚀 Starting True LLM Autoresearch Loop...")
     
     # 1. Read the system prompt / instructions
