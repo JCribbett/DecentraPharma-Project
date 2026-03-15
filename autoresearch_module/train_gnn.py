@@ -14,8 +14,11 @@ import pandas as pd
 ## START OF AGENT IMPORTS ##
 from torch_geometric.nn import (
     GATv2Conv, GINEConv, GCNConv, GATConv, SAGEConv, GraphConv, TransformerConv,
-    global_mean_pool, global_max_pool, global_add_pool, Set2Set
+    global_mean_pool, global_max_pool, global_add_pool, Set2Set, GlobalAttention
 )
+import torch.nn.functional as F
+import torch.nn as nn
+import torch
 ## END OF AGENT IMPORTS ##
 from torch_geometric.loader import DataLoader
 from prepare_graph import prepare_graph_data, evaluate_graph_metric, NUM_ATOM_FEATURES, NUM_BOND_FEATURES
@@ -31,17 +34,20 @@ warnings.filterwarnings("ignore", message=".*scatter.*")
 
 class AntiviralGNN(nn.Module):
     """
-    GINE (Graph Isomorphism Network with Edge Features)
-    - Architecture chosen for its high expressive power (WL-test equivalent).
-    - Uses bond features explicitly in aggregation via GINEConv.
-    - 5 Layers with residual connections and BatchNorm.
-    - Concatenated Mean+Max pooling for graph representation.
+    GINE-256 with Global Attention Pooling + Max Pooling.
+    - GINEConv: Captures structural isomorphism and edge features effectively (critical for molecules).
+    - Residual Connections: Allow deeper network (5 layers).
+    - Global Attention Pooling: Learns to weight active pharmacophores (substructures) higher.
+    - Max Pooling: Retains strong signals regardless of graph size.
     """
     def __init__(self, num_node_features=NUM_ATOM_FEATURES, num_edge_features=NUM_BOND_FEATURES):
         super(AntiviralGNN, self).__init__()
 
         hidden_dim = 256
-        num_layers = 5  # Increased depth
+        num_layers = 5
+        dropout_rate = 0.2
+        
+        self.dropout_rate = dropout_rate
         
         # Encoders for atoms and bonds
         self.atom_encoder = nn.Linear(num_node_features, hidden_dim)
@@ -51,36 +57,46 @@ class AntiviralGNN(nn.Module):
         self.bns = nn.ModuleList()
         
         for _ in range(num_layers):
-            # MLP for GINE layer: transforms aggregated features
-            # Structure: Linear -> BN -> ReLU -> Linear
+            # MLP for GINE layer
+            # Input to MLP is hidden_dim (after aggregation)
+            # Output is hidden_dim
             nn_blk = nn.Sequential(
                 nn.Linear(hidden_dim, hidden_dim * 2),
                 nn.BatchNorm1d(hidden_dim * 2),
                 nn.ReLU(),
+                nn.Dropout(p=dropout_rate), 
                 nn.Linear(hidden_dim * 2, hidden_dim)
             )
-            # train_eps=True enables learning the central node weight
+            # train_eps=True enables learning the central node weight (GIN vs GCN behavior)
             self.convs.append(GINEConv(nn_blk, train_eps=True))
             self.bns.append(nn.BatchNorm1d(hidden_dim))
 
+        # Pooling: Attention-based + Max
+        # Gate NN for attention pooling: Computes score for each node
+        pool_gate_nn = nn.Sequential(
+            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.ReLU(),
+            nn.Linear(hidden_dim // 2, 1)
+        )
+        self.pool_att = GlobalAttention(gate_nn=pool_gate_nn)
+
         # Classifier head
-        # Inputs: hidden_dim * 2 (from Mean + Max pooling)
+        # Input: hidden_dim (from Attention) + hidden_dim (from Max)
         self.classifier = nn.Sequential(
             nn.Linear(hidden_dim * 2, hidden_dim),
             nn.BatchNorm1d(hidden_dim),
             nn.ReLU(),
-            nn.Dropout(0.4),
+            nn.Dropout(dropout_rate + 0.1), # Slightly higher dropout in classifier
             nn.Linear(hidden_dim, hidden_dim // 2),
             nn.BatchNorm1d(hidden_dim // 2),
             nn.ReLU(),
-            nn.Dropout(0.4),
+            nn.Dropout(dropout_rate + 0.1),
             nn.Linear(hidden_dim // 2, 1)
         )
 
     def forward(self, x, edge_index, batch, edge_attr=None, return_attention_weights=False):
-        # 1. Feature Projection
+        # 1. Encoding
         x = self.atom_encoder(x)
-        
         if edge_attr is not None:
             edge_attr = self.bond_encoder(edge_attr)
         
@@ -88,8 +104,7 @@ class AntiviralGNN(nn.Module):
         for i, conv in enumerate(self.convs):
             x_in = x
             
-            # GINEConv step
-            # GINEConv expects edge_attr to be added to neighbor features, so dimensions must match hidden_dim
+            # GINEConv
             x = conv(x, edge_index, edge_attr=edge_attr)
             
             # Batch Norm + Activation
@@ -97,16 +112,18 @@ class AntiviralGNN(nn.Module):
             x = F.relu(x)
             
             # Dropout
-            x = F.dropout(x, p=0.1, training=self.training)
+            x = F.dropout(x, p=self.dropout_rate, training=self.training)
             
             # Residual Connection
             x = x + x_in
 
         # 3. Global Pooling
-        # Combining Mean and Max pooling captures both average properties and specific motifs
-        x_mean = global_mean_pool(x, batch)
+        # Attention Pooling helps focus on significant nodes
+        x_att = self.pool_att(x, batch)
+        # Max Pooling captures peak activations
         x_max = global_max_pool(x, batch)
-        x_pool = torch.cat([x_mean, x_max], dim=1)
+        
+        x_pool = torch.cat([x_att, x_max], dim=1)
         
         # 4. Classification
         out = self.classifier(x_pool)
@@ -120,9 +137,9 @@ class AntiviralGNN(nn.Module):
 LEARNING_RATE = 0.001
 BATCH_SIZE = 256
 WEIGHT_DECAY = 1e-5
-SCHEDULER_PATIENCE = 7
+SCHEDULER_PATIENCE = 5
 TIME_BUDGET = 900
-DESCRIPTION = "GINE-256 (5 layers) + ResNet + Mean/Max Pool"
+DESCRIPTION = "GINE-256 (5 layers) + GlobalAttention/Max Pool + Dropout 0.2"
 
 ## END OF AGENT MODIFIABLE SECTION ##
 
