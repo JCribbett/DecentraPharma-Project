@@ -6,13 +6,7 @@ import sys
 #import google.generativeai as genai
 import requests
 
-# Note: You would install a library like `google-generativeai` or `openai` to power this.
-# For this example, we'll use a placeholder structure for the LLM call.
-
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-SCRIPT_TO_EDIT = os.path.join(SCRIPT_DIR, "train_gnn.py")
-RESULTS_FILE = os.path.join(SCRIPT_DIR, "results_gnn.tsv")
-PROGRAM_INSTRUCTIONS = os.path.join(SCRIPT_DIR, "program_gnn.md")
 
 def load_env():
     env_path = os.path.join(SCRIPT_DIR, ".env")
@@ -104,11 +98,11 @@ def inject_section(full_code, new_section, start_marker, end_marker):
         
     return full_code[:start_idx] + new_section + full_code[end_idx:]
 
-def get_best_score():
-    if not os.path.exists(RESULTS_FILE):
+def get_best_score(results_file):
+    if not os.path.exists(results_file):
         return -float('inf')
     try:
-        with open(RESULTS_FILE, 'r') as f:
+        with open(results_file, 'r') as f:
             lines = f.readlines()
         if len(lines) < 2: return -float('inf')
         
@@ -117,20 +111,29 @@ def get_best_score():
     except Exception:
         return -float('inf')
 
-def main():
+def main(script_to_edit, program_instructions_file, results_file):
     # Load environment variables from .env file if it exists
     load_env()
     
     print("🚀 Starting True LLM Autoresearch Loop...")
+    print(f"   - Target Script: {os.path.basename(script_to_edit)}")
+    print(f"   - Instructions:  {os.path.basename(program_instructions_file)}")
+    print(f"   - Results Log:   {os.path.basename(results_file)}")
     
     # 1. Read the system prompt / instructions
-    system_instructions = get_file_content(PROGRAM_INSTRUCTIONS)
-    best_score = get_best_score()
+    try:
+        system_instructions = get_file_content(program_instructions_file)
+    except FileNotFoundError:
+        print(f"❌ CRITICAL: Instruction file not found at '{program_instructions_file}'")
+        sys.exit(1)
+        
+    best_score = get_best_score(results_file)
     print(f"Current Best val_auc: {best_score}")
     
     # 2. Ensure git is clean
     stdout, returncode = run_git_command("git status --porcelain")
-    if stdout:
+    # Check if the target script itself has uncommitted changes
+    if os.path.basename(script_to_edit) in stdout:
         print("⚠️ Git working directory is not clean. Please commit or stash changes before running.")
         sys.exit(1)
 
@@ -140,7 +143,7 @@ def main():
         print(f"🔬 Iteration {iteration} (Best Score: {best_score})")
         
         # 3. Read current code and get LLM suggestion
-        full_code = get_file_content(SCRIPT_TO_EDIT)
+        full_code = get_file_content(script_to_edit)
         
         imports_marker_start = "## START OF AGENT IMPORTS ##"
         imports_marker_end = "## END OF AGENT IMPORTS ##"
@@ -152,8 +155,8 @@ def main():
         
         # Read recent results to give context to the LLM
         recent_history = ""
-        if os.path.exists(RESULTS_FILE):
-            with open(RESULTS_FILE, "r") as f:
+        if os.path.exists(results_file):
+            with open(results_file, "r") as f:
                 recent_history = "".join(f.readlines()[-5:])
 
         prompt = f"""
@@ -188,11 +191,11 @@ def main():
             updated_code = inject_section(updated_code, new_imports_section, imports_marker_start, imports_marker_end)
         updated_code = inject_section(updated_code, new_modifiable_section, mod_marker_start, mod_marker_end)
         
-        with open(SCRIPT_TO_EDIT, "w") as f:
+        with open(script_to_edit, "w") as f:
             f.write(updated_code)
             
         # 4. Commit the experiment (per program.md instructions)
-        run_git_command(f"git add {SCRIPT_TO_EDIT}")
+        run_git_command(f"git add {script_to_edit}")
         run_git_command('git commit -m "Autoresearch iteration"')
         commit_hash, _ = run_git_command("git rev-parse --short HEAD")
         
@@ -200,7 +203,7 @@ def main():
         print(f"[⚙️] Running experiment {commit_hash}...")
         run_log_path = os.path.join(SCRIPT_DIR, "run.log")
         with open(run_log_path, "w") as log_file:
-            result = subprocess.run([sys.executable, SCRIPT_TO_EDIT], stdout=log_file, stderr=subprocess.STDOUT, cwd=SCRIPT_DIR)
+            result = subprocess.run([sys.executable, "-u", script_to_edit], stdout=log_file, stderr=subprocess.STDOUT, cwd=SCRIPT_DIR)
             
         # 6. Parse Results
         with open(run_log_path, "r") as log_file:
@@ -229,4 +232,14 @@ def main():
         time.sleep(2)
 
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="LLM-driven autonomous researcher for GNNs.")
+    parser.add_argument("--script", type=str, default="train_gnn.py", help="The training script to be modified by the LLM.")
+    parser.add_argument("--program", type=str, default="program_gnn.md", help="The markdown file with instructions for the LLM.")
+    parser.add_argument("--results", type=str, default="results_gnn.tsv", help="The TSV file to log experiment results.")
+    args = parser.parse_args()
+
+    main(
+        script_to_edit=os.path.join(SCRIPT_DIR, args.script),
+        program_instructions_file=os.path.join(SCRIPT_DIR, args.program),
+        results_file=os.path.join(SCRIPT_DIR, args.results)
+    )

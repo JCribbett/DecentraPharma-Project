@@ -97,14 +97,27 @@ class Node:
             
         elif task["type"] == "3d_docking":
             smiles = task['smiles']
-            # Target setup
-            target_pdb_id = "3OXZ"
-            script_dir = os.path.join(os.path.dirname(__file__), '..', 'autoresearch_module')
-            pdb_path = os.path.join(script_dir, f"{target_pdb_id.lower()}.pdb")
+            target_cid = task.get('target_cid')
             
-            if not os.path.exists(pdb_path):
-                logging.info(f"Downloading target protein {target_pdb_id}...")
-                download_pdb(target_pdb_id, output_dir=script_dir)
+            # Target setup
+            script_dir = os.path.join(os.path.dirname(__file__), '..', 'autoresearch_module')
+            
+            if target_cid:
+                pdb_path = os.path.join(script_dir, f"target_{target_cid}.pdb")
+                if not os.path.exists(pdb_path):
+                    logging.info(f"Downloading target protein from IPFS (CID: {target_cid})...")
+                    response = requests.get(f"{IPFS_GATEWAY}{target_cid}")
+                    if response.status_code == 200:
+                        with open(pdb_path, 'wb') as f:
+                            f.write(response.content)
+                    else:
+                        return {"status": "error", "message": f"Failed to download CID {target_cid}"}
+            else:
+                target_pdb_id = "3OXZ"
+                pdb_path = os.path.join(script_dir, f"{target_pdb_id.lower()}.pdb")
+                if not os.path.exists(pdb_path):
+                    logging.info(f"Downloading target protein {target_pdb_id}...")
+                    download_pdb(target_pdb_id, output_dir=script_dir)
             
             # File paths
             project_dir = os.path.dirname(script_dir)
@@ -134,9 +147,9 @@ class Node:
                 logging.info(f"🏆 High affinity detected ({affinity} kcal/mol)! Uploading result to IPFS...")
                 
                 headers = {}
-                pinata_jwt = os.environ.get("PINATA_JWT")
-                pinata_api_key = os.environ.get("PINATA_API_KEY")
-                pinata_secret_api_key = os.environ.get("PINATA_SECRET_API_KEY")
+                pinata_jwt = os.environ.get("DECENTRAPHARMA_PINATA_JWT") or os.environ.get("PINATA_JWT")
+                pinata_api_key = os.environ.get("DECENTRAPHARMA_PINATA_API_KEY") or os.environ.get("PINATA_API_KEY")
+                pinata_secret_api_key = os.environ.get("DECENTRAPHARMA_PINATA_API_SECRET") or os.environ.get("PINATA_SECRET_API_KEY")
                 
                 if pinata_jwt and pinata_jwt.startswith("ey"):
                     headers["Authorization"] = f"Bearer {pinata_jwt}"
@@ -158,6 +171,46 @@ class Node:
                 return {"status": "success", "docking_affinity": affinity, "ipfs_cid": ipfs_cid}
             else:
                 return {"status": "error", "message": "Docking failed"}
+                
+        elif task["type"] == "3d_folding":
+            sequence = task.get("sequence")
+            if not sequence: return {"status": "error", "message": "No sequence provided"}
+            
+            logging.info(f"⚙️ Task {task['task_id']}: Folding protein sequence ({len(sequence)} amino acids) using ESMFold...")
+            
+            try:
+                # Use Meta's ESMFold public API for decentralized folding without requiring local TBs of databases
+                response = requests.post('https://api.esmatlas.com/foldSequence/v1/pdb/', data=sequence, timeout=120)
+                
+                if response.status_code == 200:
+                    project_dir = os.path.dirname(os.path.dirname(__file__))
+                    pdb_path = os.path.join(project_dir, f"folded_task_{task['task_id']}.pdb")
+                    
+                    with open(pdb_path, 'w') as f:
+                        f.write(response.text)
+                        
+                    logging.info("✅ Protein folded successfully! Uploading 3D PDB structure to IPFS...")
+                    
+                    headers = {}
+                    pinata_jwt = os.environ.get("DECENTRAPHARMA_PINATA_JWT") or os.environ.get("PINATA_JWT", "")
+                    pinata_api_key = os.environ.get("DECENTRAPHARMA_PINATA_API_KEY") or os.environ.get("PINATA_API_KEY")
+                    pinata_secret_api_key = os.environ.get("DECENTRAPHARMA_PINATA_API_SECRET") or os.environ.get("PINATA_SECRET_API_KEY")
+                    
+                    if pinata_jwt.startswith("ey"):
+                        headers["Authorization"] = f"Bearer {pinata_jwt}"
+                    elif pinata_api_key and pinata_secret_api_key:
+                        headers["pinata_api_key"] = pinata_api_key
+                        headers["pinata_secret_api_key"] = pinata_secret_api_key
+                        
+                    ipfs_cid = upload_file_to_ipfs(pdb_path, headers) if headers else None
+                    
+                    if os.path.exists(pdb_path): os.remove(pdb_path)
+                    
+                    return {"status": "success", "message": "Protein folded", "ipfs_cid": ipfs_cid}
+                else:
+                    return {"status": "error", "message": f"ESMFold API error: {response.status_code}"}
+            except Exception as e:
+                return {"status": "error", "message": f"Folding failed: {e}"}
         
     def submit_result(self, task_id, result): 
         payload = {
@@ -181,6 +234,7 @@ class Node:
                 if task:
                     result = self.process_task(task)
                     result['smiles'] = task.get('smiles')
+                    result['task_type'] = task.get('type')
                     self.submit_result(task['task_id'], result)
                 time.sleep(5)
         except KeyboardInterrupt:

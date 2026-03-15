@@ -30,9 +30,9 @@ def main():
     print("--- DecentraPharma IPFS Uploader (via Pinata) ---\n")
     
     headers = {}
-    pinata_jwt = os.environ.get("PINATA_JWT")
-    pinata_api_key = os.environ.get("PINATA_API_KEY")
-    pinata_secret_api_key = os.environ.get("PINATA_SECRET_API_KEY")
+    pinata_jwt = os.environ.get("DECENTRAPHARMA_PINATA_JWT") or os.environ.get("PINATA_JWT")
+    pinata_api_key = os.environ.get("DECENTRAPHARMA_PINATA_API_KEY") or os.environ.get("PINATA_API_KEY")
+    pinata_secret_api_key = os.environ.get("DECENTRAPHARMA_PINATA_API_SECRET") or os.environ.get("PINATA_SECRET_API_KEY")
     
     if pinata_jwt and pinata_jwt.startswith("ey"):
         headers["Authorization"] = f"Bearer {pinata_jwt}"
@@ -41,7 +41,7 @@ def main():
         headers["pinata_secret_api_key"] = pinata_secret_api_key
     else:
         print("🚨 CRITICAL: Pinata authentication missing or incomplete!")
-        print("Please set PINATA_JWT, OR both PINATA_API_KEY and PINATA_SECRET_API_KEY in your .env file.")
+        print("Please set DECENTRAPHARMA_PINATA_JWT, OR both DECENTRAPHARMA_PINATA_API_KEY and DECENTRAPHARMA_PINATA_API_SECRET.")
         return
     
     # List of key artifacts to share with the decentralized network
