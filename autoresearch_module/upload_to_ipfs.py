@@ -53,10 +53,16 @@ def main():
     ]
     
     script_dir = os.path.dirname(os.path.abspath(__file__))
+    project_dir = os.path.dirname(script_dir)
     uploaded_records = {}
     
     for filename in files_to_upload:
         file_path = os.path.join(script_dir, filename)
+        if not os.path.exists(file_path):
+            alt_path = os.path.join(project_dir, filename)
+            if os.path.exists(alt_path):
+                file_path = alt_path
+                
         cid = upload_file_to_ipfs(file_path, headers)
         if cid:
             uploaded_records[filename] = cid

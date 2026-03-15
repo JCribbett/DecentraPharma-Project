@@ -212,7 +212,8 @@ def main(script_to_edit, program_instructions_file, results_file):
         match = re.search(r"val_auc:\s+([0-9.]+)", log_content)
         if result.returncode != 0 or not match:
             print("[❌] Script crashed or no val_auc found. Reverting...")
-            run_git_command("git reset --hard HEAD~1") # Revert commit
+            run_git_command("git reset HEAD~1") # Soft revert the commit
+            run_git_command(f"git checkout -- {script_to_edit}") # Discard script changes safely
             continue
             
         val_auc = float(match.group(1))
@@ -225,7 +226,8 @@ def main(script_to_edit, program_instructions_file, results_file):
             # Script remains on this commit, serving as the new baseline
         else:
             print(f"📉 No improvement. Reverting commit.")
-            run_git_command("git reset --hard HEAD~1")
+            run_git_command("git reset HEAD~1")
+            run_git_command(f"git checkout -- {script_to_edit}")
             # File reverts back, ready for a new attempt
             
         iteration += 1
