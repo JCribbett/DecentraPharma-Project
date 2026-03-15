@@ -162,7 +162,7 @@ def main():
         
         new_modifiable_section = call_llm(prompt, modifiable_section)
         
-        if new_modifiable_section.strip() == modifiable_section.strip() or new_modifiable_section == current_code:
+        if new_modifiable_section.strip() == modifiable_section.strip():
             print("⚠️ LLM returned identical code or an error occurred. Retrying in 5 seconds...")
             time.sleep(5)
             continue
