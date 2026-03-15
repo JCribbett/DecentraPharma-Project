@@ -52,14 +52,24 @@ class AntiviralGNN(nn.Module):
             nn.Linear(hidden_dim, 1)
         )
 
-    def forward(self, x, edge_index, batch, edge_attr=None):
-        # GAT layers with residual-style connections
-        x1 = F.elu(self.bn1(self.conv1(x, edge_index, edge_attr=edge_attr)))
-        x2 = F.elu(self.bn2(self.conv2(x1, edge_index, edge_attr=edge_attr)))
+    def forward(self, x, edge_index, batch, edge_attr=None, return_attention_weights=False):
+        attn_weights = []
+        
+        def apply_conv(conv, x_in):
+            if return_attention_weights:
+                # PyG returns (out, (edge_index, alpha)) when this flag is True
+                out, (e_idx, alpha) = conv(x_in, edge_index, edge_attr=edge_attr, return_attention_weights=True)
+                attn_weights.append((e_idx, alpha))
+                return out
+            return conv(x_in, edge_index, edge_attr=edge_attr)
+
+        # GAT layers with residual-style connections and optional attention extraction
+        x1 = F.elu(self.bn1(apply_conv(self.conv1, x)))
+        x2 = F.elu(self.bn2(apply_conv(self.conv2, x1)))
         x1_res = x1 + x2
         
-        x3 = F.elu(self.bn3(self.conv3(x1_res, edge_index, edge_attr=edge_attr)))
-        x4 = F.elu(self.bn4(self.conv4(x3, edge_index, edge_attr=edge_attr)))
+        x3 = F.elu(self.bn3(apply_conv(self.conv3, x1_res)))
+        x4 = F.elu(self.bn4(apply_conv(self.conv4, x3)))
         x3_res = x3 + x4
 
         # Global pooling (mean + max concatenation)
@@ -69,14 +79,16 @@ class AntiviralGNN(nn.Module):
 
         # Classify
         out = self.classifier(x)
+        if return_attention_weights:
+            return out.squeeze(-1), attn_weights
         return out.squeeze(-1)
 
 # Hyperparameters
 LEARNING_RATE= 3e-4
-BATCH_SIZE= 102
+BATCH_SIZE= 106
 WEIGHT_DECAY= 1e-5
-SCHEDULER_PATIENCE= 8
-TIME_BUDGET= 1526 # 20 minutes
+SCHEDULER_PATIENCE = 8
+TIME_BUDGET= 1325 # 20 minutes
 DESCRIPTION = "4-layer GATv2 baseline test"
 
 ## END OF AGENT MODIFIABLE SECTION ##

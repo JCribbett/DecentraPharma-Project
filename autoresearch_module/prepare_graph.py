@@ -11,6 +11,7 @@ import pandas as pd
 import torch
 from torch_geometric.data import Data, InMemoryDataset
 from rdkit import Chem
+from rdkit.Chem import AllChem
 from sklearn.model_selection import train_test_split
 
 # Constants
@@ -19,7 +20,9 @@ DATASET_URL = 'https://deepchemdata.s3-us-west-1.amazonaws.com/datasets/HIV.csv'
 DATASET_PATH = os.path.join(DATA_DIR, 'HIV.csv')
 GRAPH_CACHE_PATH = os.path.join(DATA_DIR, 'graph_data.pt')
 TIME_BUDGET = 300  # 5 minutes
-NUM_ATOM_FEATURES = 9  # Number of atom-level features
+NUM_ATOM_FEATURES = 16  # 9 element + 7 properties
+NUM_BOND_FEATURES = 6  # bond type (4) + conjugated + in_ring
+FINGERPRINT_SIZE = 2048
 
 # ---------------------------------------------------------------------------
 # Atom featurization
@@ -43,9 +46,6 @@ def atom_features(atom):
         int(atom.IsInRing()),                   # in ring
     ]
     return features
-
-NUM_ATOM_FEATURES = 16  # 9 element + 7 properties
-NUM_BOND_FEATURES = 6  # bond type (4) + conjugated + in_ring
 
 
 def mol_to_graph(smiles, label):
@@ -90,9 +90,13 @@ def mol_to_graph(smiles, label):
         edge_index = torch.tensor(edge_index, dtype=torch.long).t().contiguous()
         edge_attr = torch.tensor(edge_attr, dtype=torch.float)
 
+    # Global fingerprint (Morgan 2048-bit)
+    fp = AllChem.GetMorganFingerprintAsBitVect(mol, 2, nBits=FINGERPRINT_SIZE)
+    fp_tensor = torch.tensor(list(fp), dtype=torch.float).unsqueeze(0) # [1, 2048]
+
     y = torch.tensor([label], dtype=torch.float)
 
-    return Data(x=x, edge_index=edge_index, edge_attr=edge_attr, y=y)
+    return Data(x=x, edge_index=edge_index, edge_attr=edge_attr, y=y, fp=fp_tensor)
 
 
 # ---------------------------------------------------------------------------
@@ -117,11 +121,22 @@ def prepare_graph_data():
     Returns: (train_graphs, val_graphs) as lists of Data objects.
     """
     # Check cache
+    # IMPORTANT: We force rebuild if we suspect old cache lacks fingerprints
+    # or just rely on user to delete it. For now, let's assume we delete it manually or use a new name.
+    # Let's try to load, and if 'fp' is missing in the first element, we rebuild.
+    
     if os.path.exists(GRAPH_CACHE_PATH):
         print("Loading cached graph data...")
-        cached = torch.load(GRAPH_CACHE_PATH, weights_only=False)
-        print(f"Loaded: Train={len(cached['train'])}, Val={len(cached['val'])}")
-        return cached['train'], cached['val']
+        try:
+            cached = torch.load(GRAPH_CACHE_PATH, weights_only=False)
+            if 'train' in cached and len(cached['train']) > 0:
+                if not hasattr(cached['train'][0], 'fp'):
+                    print("Cache outdated (missing fingerprints). Rebuilding...")
+                else:
+                    print(f"Loaded: Train={len(cached['train'])}, Val={len(cached['val'])}")
+                    return cached['train'], cached['val']
+        except Exception as e:
+            print(f"Error loading cache: {e}. Rebuilding...")
 
     # Build from scratch
     print("Building graph data from SMILES (this may take a few minutes)...")
@@ -175,13 +190,22 @@ def evaluate_graph_metric(model, val_loader, device):
             batch = batch.to(device)
             # Pass edge_attr if available and model accepts it
             edge_attr = getattr(batch, 'edge_attr', None)
-            if edge_attr is not None:
+            fp = getattr(batch, 'fp', None)
+            
+            # Handle fingerprint batching
+            # In PyG, batch.fp will be stacked [batch_size, 1, 2048] -> [batch_size, 2048]
+            if fp is not None:
+                fp = fp.view(-1, 2048)
+
+            try:
+                out = model(batch.x, batch.edge_index, batch.batch, edge_attr=edge_attr, fp=fp)
+            except TypeError:
+                 # Fallback for models that don't support fp yet
                 try:
-                    out = model(batch.x, batch.edge_index, batch.batch, edge_attr=edge_attr)
-                except TypeError:
                     out = model(batch.x, batch.edge_index, batch.batch)
-            else:
-                out = model(batch.x, batch.edge_index, batch.batch)
+                except:
+                     out = model(batch.x, batch.edge_index, batch.batch, edge_attr=edge_attr)
+                     
             probs = torch.sigmoid(out).cpu().numpy()
             all_preds.extend(probs.flatten())
             all_labels.extend(batch.y.cpu().numpy().flatten())
