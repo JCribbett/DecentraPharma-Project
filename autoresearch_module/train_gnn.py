@@ -11,7 +11,12 @@ import torch.nn as nn
 import torch.nn.functional as F
 import os
 import pandas as pd
-from torch_geometric.nn import GATv2Conv, GINEConv, global_mean_pool, global_max_pool
+## START OF AGENT IMPORTS ##
+from torch_geometric.nn import (
+    GATv2Conv, GINEConv, GCNConv, GATConv, SAGEConv, GraphConv, TransformerConv,
+    global_mean_pool, global_max_pool, global_add_pool, Set2Set
+)
+## END OF AGENT IMPORTS ##
 from torch_geometric.loader import DataLoader
 from prepare_graph import prepare_graph_data, evaluate_graph_metric, NUM_ATOM_FEATURES, NUM_BOND_FEATURES
 

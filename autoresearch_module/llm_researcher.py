@@ -86,24 +86,22 @@ def call_llm(prompt, current_code):
     print("⚠️ No API key found. Please set GEMINI_API_KEY or OPENROUTER_API_KEY.")
     return current_code # Placeholder
 
-def extract_modifiable_section(code):
-    start_marker = "## START OF AGENT MODIFIABLE SECTION ##"
-    end_marker = "## END OF AGENT MODIFIABLE SECTION ##"
+def extract_section(code, start_marker, end_marker):
     start_idx = code.find(start_marker)
     end_idx = code.find(end_marker)
     
     if start_idx == -1 or end_idx == -1:
-        raise ValueError("Could not find agent modifiable section markers.")
+        return None
         
     return code[start_idx:end_idx + len(end_marker)]
 
-def inject_modifiable_section(full_code, new_section):
-    start_marker = "## START OF AGENT MODIFIABLE SECTION ##"
-    end_marker = "## END OF AGENT MODIFIABLE SECTION ##"
-    
+def inject_section(full_code, new_section, start_marker, end_marker):
     start_idx = full_code.find(start_marker)
     end_idx = full_code.find(end_marker) + len(end_marker)
     
+    if start_idx == -1 or end_idx == -1:
+        return full_code
+        
     return full_code[:start_idx] + new_section + full_code[end_idx:]
 
 def get_best_score():
@@ -143,7 +141,14 @@ def main():
         
         # 3. Read current code and get LLM suggestion
         full_code = get_file_content(SCRIPT_TO_EDIT)
-        modifiable_section = extract_modifiable_section(full_code)
+        
+        imports_marker_start = "## START OF AGENT IMPORTS ##"
+        imports_marker_end = "## END OF AGENT IMPORTS ##"
+        mod_marker_start = "## START OF AGENT MODIFIABLE SECTION ##"
+        mod_marker_end = "## END OF AGENT MODIFIABLE SECTION ##"
+        
+        imports_section = extract_section(full_code, imports_marker_start, imports_marker_end)
+        modifiable_section = extract_section(full_code, mod_marker_start, mod_marker_end)
         
         # Read recent results to give context to the LLM
         recent_history = ""
@@ -157,18 +162,32 @@ def main():
         Recent experiments history:
         {recent_history}
         
-        Provide ONLY the updated modifiable section code. Do not wrap in markdown block.
+        Please provide the updated code for BOTH the imports section and the modifiable section.
+        You must include the exact markers for both sections in your response.
         """
         
-        new_modifiable_section = call_llm(prompt, modifiable_section)
+        current_context = f"{imports_section}\n\n...\n\n{modifiable_section}" if imports_section else modifiable_section
         
+        llm_response = call_llm(prompt, current_context)
+        
+        new_imports_section = extract_section(llm_response, imports_marker_start, imports_marker_end)
+        new_modifiable_section = extract_section(llm_response, mod_marker_start, mod_marker_end)
+        
+        if not new_modifiable_section:
+            # Fallback if the LLM didn't use the markers, assume the whole response is the modifiable section
+            new_modifiable_section = f"{mod_marker_start}\n{llm_response}\n{mod_marker_end}"
+            
         if new_modifiable_section.strip() == modifiable_section.strip():
             print("⚠️ LLM returned identical code or an error occurred. Retrying in 5 seconds...")
             time.sleep(5)
             continue
 
         # Replace and save the file
-        updated_code = inject_modifiable_section(full_code, new_modifiable_section)
+        updated_code = full_code
+        if new_imports_section:
+            updated_code = inject_section(updated_code, new_imports_section, imports_marker_start, imports_marker_end)
+        updated_code = inject_section(updated_code, new_modifiable_section, mod_marker_start, mod_marker_end)
+        
         with open(SCRIPT_TO_EDIT, "w") as f:
             f.write(updated_code)
             

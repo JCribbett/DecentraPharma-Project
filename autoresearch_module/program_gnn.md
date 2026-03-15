@@ -19,6 +19,7 @@ The goal is to surpass the MLP baseline of **0.8740 AUC** and reach **0.92+ AUC*
 
 ## Agent Instructions
 You may modify the code between `## START OF AGENT MODIFIABLE SECTION ##` and `## END OF AGENT MODIFIABLE SECTION ##` in `train_gnn.py`.
+If you need to import new layers or modules, you can also modify the code between `## START OF AGENT IMPORTS ##` and `## END OF AGENT IMPORTS ##`.
 
 ### Things to try (in order of expected impact):
 1. **Graph Attention Networks (GAT):** Replace GCNConv with GATConv for attention-weighted message passing
