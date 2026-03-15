@@ -3,6 +3,7 @@ import torch
 from rdkit import Chem
 from torch_geometric.loader import DataLoader
 import warnings
+import os
 
 # Suppress RDKit warnings for cleaner output
 from rdkit import RDLogger
@@ -12,7 +13,9 @@ warnings.filterwarnings("ignore")
 from data_loader import mol_to_graph
 from train_gnn import AntiviralGNN
 
-def predict(smiles_list, model_path="best_gnn_model.pt"):
+DEFAULT_MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "best_gnn_model.pt")
+
+def predict(smiles_list, model_path=DEFAULT_MODEL_PATH):
     # 1. Initialize the model architecture
     model = AntiviralGNN()
     
@@ -63,7 +66,7 @@ def predict(smiles_list, model_path="best_gnn_model.pt"):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run inference on unseen molecules using trained GNN models.")
     parser.add_argument("--smiles", nargs='+', required=True, help="One or more SMILES strings to test.")
-    parser.add_argument("--model", type=str, default="best_gnn_model.pt", help="Path to the trained model weights (.pth or .pth.tar).")
+    parser.add_argument("--model", type=str, default=DEFAULT_MODEL_PATH, help="Path to the trained model weights (.pth or .pth.tar).")
     
     args = parser.parse_args()
     predict(args.smiles, args.model)

@@ -29,6 +29,7 @@ class Node:
         self.model_path = os.path.join(os.path.dirname(__file__), "downloaded_model.pt")
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.model = None
+        self.server_url = "http://127.0.0.1:8000"
         
         logging.info(f"Node {self.node_id} booting up...")
         self.download_model()
@@ -61,21 +62,15 @@ class Node:
             logging.info("🧠 Neural Network loaded into memory and ready.")
 
     def fetch_task(self): 
-        # Simulates a central DecentraPharma server giving this node molecules to evaluate
-        smiles_list = [
-            "Cc1cn(C2CC(F)C(COC(=O)CCCCCCCCCCCN=[N+]=[N-])O2)c(=O)[nH]c1=O", # The AI's Super-AZT
-            "O=C(CCCC[n+]1ccccc1)Sc1ccccc1C(=O)Nc1ccc(S(=O)(=O)c2ccc([N+](=O)[O-])cc2)cc1.[Br-]",
-            "CC(=O)OC1=CC=CC=C1C(=O)O" # Aspirin
-        ]
-        # Randomly assign a 2D or 3D task
-        task_type = random.choice(["2d_scoring", "3d_docking"])
-        task = {
-            "task_id": random.randint(1000, 9999), 
-            "type": task_type,
-            "smiles": random.choice(smiles_list)
-        }
-        logging.info(f"⬇️ Fetched Task {task['task_id']} ({task['type']}): {task['smiles'][:25]}...")
-        return task
+        try:
+            response = requests.get(f"{self.server_url}/task")
+            if response.status_code == 200:
+                task = response.json()
+                logging.info(f"⬇️ Fetched Task {task['task_id']} ({task['type']}): {task['smiles'][:25]}...")
+                return task
+        except requests.exceptions.ConnectionError:
+            logging.warning("⚠️ Cannot connect to central dispatch server. Retrying...")
+        return None
         
     def process_task(self, task): 
         if task["type"] == "2d_scoring":
@@ -165,14 +160,28 @@ class Node:
                 return {"status": "error", "message": "Docking failed"}
         
     def submit_result(self, task_id, result): 
-        logging.info(f"⬆️ Submitted result for Task {task_id} back to network.\n")
+        payload = {
+            "task_id": task_id,
+            "node_id": self.node_id,
+            **result
+        }
+        try:
+            response = requests.post(f"{self.server_url}/result", json=payload)
+            if response.status_code == 200:
+                logging.info(f"⬆️ Submitted result for Task {task_id} back to network.\n")
+            else:
+                logging.error(f"❌ Failed to submit result: {response.text}")
+        except requests.exceptions.ConnectionError:
+            logging.error("❌ Cannot connect to server to submit result.")
         
     def run(self):
         try:
             while True:
                 task = self.fetch_task()
-                result = self.process_task(task)
-                self.submit_result(task['task_id'], result)
+                if task:
+                    result = self.process_task(task)
+                    result['smiles'] = task.get('smiles')
+                    self.submit_result(task['task_id'], result)
                 time.sleep(5)
         except KeyboardInterrupt:
             logging.info("Node shutting down.")
