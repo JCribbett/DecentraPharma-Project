@@ -79,6 +79,8 @@ def call_llm(prompt, current_code):
             return extract_code_block(data["choices"][0]["message"]["content"])
         except Exception as e:
             print(f"⚠️ Error calling OpenRouter API: {e}")
+            if hasattr(e, 'response') and e.response is not None:
+                print(f"Response details: {e.response.text}")
             return current_code
 
     print("⚠️ No API key found. Please set GEMINI_API_KEY or OPENROUTER_API_KEY.")
@@ -160,6 +162,11 @@ def main():
         
         new_modifiable_section = call_llm(prompt, modifiable_section)
         
+        if new_modifiable_section.strip() == modifiable_section.strip() or new_modifiable_section == current_code:
+            print("⚠️ LLM returned identical code or an error occurred. Retrying in 5 seconds...")
+            time.sleep(5)
+            continue
+
         # Replace and save the file
         updated_code = inject_modifiable_section(full_code, new_modifiable_section)
         with open(SCRIPT_TO_EDIT, "w") as f:
