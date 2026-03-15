@@ -10,7 +10,7 @@ except ImportError:
 
 # Dynamically import your latest smart architectures
 sys.path.append(os.path.join(os.path.dirname(__file__), '..', 'autoresearch_module'))
-from train_gnn import AntiviralGNN
+from best_model import AntiviralGNN
 from data_loader import mol_to_graph
 from torch_geometric.loader import DataLoader
 from generate_3d import generate_3d_conformer

@@ -11,7 +11,7 @@ RDLogger.DisableLog('rdApp.*')
 warnings.filterwarnings("ignore")
 
 from data_loader import mol_to_graph
-from train_gnn import AntiviralGNN
+from best_model import AntiviralGNN
 
 DEFAULT_MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "best_gnn_model.pt")
 

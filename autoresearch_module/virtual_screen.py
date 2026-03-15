@@ -11,7 +11,7 @@ RDLogger.DisableLog('rdApp.*')
 warnings.filterwarnings("ignore")
 
 from data_loader import mol_to_graph, TOX_DATA_URL
-from train_gnn import AntiviralGNN
+from best_model import AntiviralGNN
 
 def run_screen(model_path="best_gnn_model.pt", top_k=20):
     print(f"--- DecentraPharma Virtual Screening ---")

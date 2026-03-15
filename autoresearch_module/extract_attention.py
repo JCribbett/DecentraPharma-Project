@@ -1,6 +1,7 @@
 import argparse
 import torch
 from rdkit import Chem
+from rdkit.Chem import Draw
 from torch_geometric.loader import DataLoader
 import warnings
 import os
@@ -10,9 +11,11 @@ RDLogger.DisableLog('rdApp.*')
 warnings.filterwarnings("ignore")
 
 from prepare_graph import mol_to_graph
-from train_gnn import AntiviralGNN
+from best_model import AntiviralGNN
 
-def analyze_attention(smiles, model_path="best_gnn_model.pt"):
+DEFAULT_MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "best_gnn_model.pt")
+
+def analyze_attention(smiles, model_path=DEFAULT_MODEL_PATH):
     if not os.path.exists(model_path):
         print(f"Error: Model weights not found at {model_path}")
         return
@@ -56,6 +59,7 @@ def analyze_attention(smiles, model_path="best_gnn_model.pt"):
     sorted_indices = torch.argsort(alpha_mean, descending=True)
     
     print("Top 5 highest attention bonds (edges) in the final layer:\n")
+    highlight_bonds = []
     for idx in sorted_indices[:5]:
         src, dst = edge_index[0, idx].item(), edge_index[1, idx].item()
         weight = alpha_mean[idx].item()
@@ -63,11 +67,18 @@ def analyze_attention(smiles, model_path="best_gnn_model.pt"):
         dst_atom = mol.GetAtomWithIdx(dst).GetSymbol()
         
         print(f"  Atom {src:2d} ({src_atom}) -> Atom {dst:2d} ({dst_atom}) | Attention Score: {weight:.4f}")
+        
+        bond = mol.GetBondBetweenAtoms(src, dst)
+        if bond: highlight_bonds.append(bond.GetIdx())
+
+    img = Draw.MolToImage(mol, highlightBonds=highlight_bonds, size=(600, 600))
+    img.save("attention_map.png")
+    print("\n📸 Saved visual attention map to 'attention_map.png'")
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Extract and interpret GATv2 attention weights for a molecule.")
     parser.add_argument("--smiles", type=str, required=True, help="SMILES string of the molecule.")
-    parser.add_argument("--model", type=str, default="best_gnn_model.pt", help="Path to the trained GNN weights.")
+    parser.add_argument("--model", type=str, default=DEFAULT_MODEL_PATH, help="Path to the trained GNN weights.")
     
     args = parser.parse_args()
     analyze_attention(args.smiles, args.model)

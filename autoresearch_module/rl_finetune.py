@@ -13,7 +13,7 @@ RDLogger.DisableLog('rdApp.*')
 warnings.filterwarnings("ignore")
 
 from smiles_generator import SMILESRNN, SMILESVocab, generate_molecules
-from train_gnn import AntiviralGNN as HIV_GNN
+from best_model import AntiviralGNN as HIV_GNN
 from model_hiv import AntiviralGNN as Tox_GNN
 from data_loader import mol_to_graph
 
