@@ -13,8 +13,9 @@ import os
 import pandas as pd
 ## START OF AGENT IMPORTS ##
 from torch_geometric.nn import (
-    GATv2Conv, GINEConv, GCNConv, GATConv, SAGEConv, GraphConv, TransformerConv,
-    global_mean_pool, global_max_pool, global_add_pool, Set2Set, GlobalAttention
+    GINEConv, GCNConv, GATConv, GATv2Conv,
+    global_mean_pool, global_max_pool, global_add_pool, 
+    Set2Set, GlobalAttention
 )
 import torch.nn.functional as F
 import torch.nn as nn
@@ -34,18 +35,21 @@ warnings.filterwarnings("ignore", message=".*scatter.*")
 
 class AntiviralGNN(nn.Module):
     """
-    GINE-256 with Global Attention Pooling + Max Pooling.
-    - GINEConv: Captures structural isomorphism and edge features effectively (critical for molecules).
-    - Residual Connections: Allow deeper network (5 layers).
-    - Global Attention Pooling: Learns to weight active pharmacophores (substructures) higher.
-    - Max Pooling: Retains strong signals regardless of graph size.
+    GINE-256 with Set2Set Pooling (LSTM Readout).
+    
+    Rationale:
+    1. GINEConv: Explicitly models edge features (bonds) within the aggregation, crucial for chemistry.
+    2. Deep Residual Architecture: 5 layers with residuals allows learning complex substructures.
+    3. Set2Set Pooling: Replaces static mean/max pooling with an LSTM-based mechanism 
+       that processes the set of atoms to produce a graph embedding. This is often SOTA for molecules.
+    4. Regularization: Higher dropout (0.4) to combat overfitting on the imbalanced HIV dataset.
     """
     def __init__(self, num_node_features=NUM_ATOM_FEATURES, num_edge_features=NUM_BOND_FEATURES):
         super(AntiviralGNN, self).__init__()
 
         hidden_dim = 256
         num_layers = 5
-        dropout_rate = 0.2
+        dropout_rate = 0.4
         
         self.dropout_rate = dropout_rate
         
@@ -57,9 +61,8 @@ class AntiviralGNN(nn.Module):
         self.bns = nn.ModuleList()
         
         for _ in range(num_layers):
-            # MLP for GINE layer
-            # Input to MLP is hidden_dim (after aggregation)
-            # Output is hidden_dim
+            # MLP for GINE: Hidden -> 2*Hidden -> Hidden
+            # The MLP is applied after aggregating neighbors + edge features
             nn_blk = nn.Sequential(
                 nn.Linear(hidden_dim, hidden_dim * 2),
                 nn.BatchNorm1d(hidden_dim * 2),
@@ -67,30 +70,26 @@ class AntiviralGNN(nn.Module):
                 nn.Dropout(p=dropout_rate), 
                 nn.Linear(hidden_dim * 2, hidden_dim)
             )
-            # train_eps=True enables learning the central node weight (GIN vs GCN behavior)
+            # train_eps=True lets the model learn to distinguish center node vs neighbors
             self.convs.append(GINEConv(nn_blk, train_eps=True))
             self.bns.append(nn.BatchNorm1d(hidden_dim))
 
-        # Pooling: Attention-based + Max
-        # Gate NN for attention pooling: Computes score for each node
-        pool_gate_nn = nn.Sequential(
-            nn.Linear(hidden_dim, hidden_dim // 2),
-            nn.ReLU(),
-            nn.Linear(hidden_dim // 2, 1)
-        )
-        self.pool_att = GlobalAttention(gate_nn=pool_gate_nn)
+        # Set2Set Pooling: Maps node set to graph embedding
+        # processing_steps=3 is standard for molecules
+        # Output size is 2 * hidden_dim
+        self.pooling = Set2Set(hidden_dim, processing_steps=3, num_layers=1)
 
         # Classifier head
-        # Input: hidden_dim (from Attention) + hidden_dim (from Max)
+        # Input dim is 2 * hidden_dim because Set2Set concatenates q_t and r_t (LSTM states)
         self.classifier = nn.Sequential(
-            nn.Linear(hidden_dim * 2, hidden_dim),
+            nn.Linear(2 * hidden_dim, hidden_dim),
             nn.BatchNorm1d(hidden_dim),
             nn.ReLU(),
-            nn.Dropout(dropout_rate + 0.1), # Slightly higher dropout in classifier
+            nn.Dropout(dropout_rate),
             nn.Linear(hidden_dim, hidden_dim // 2),
             nn.BatchNorm1d(hidden_dim // 2),
             nn.ReLU(),
-            nn.Dropout(dropout_rate + 0.1),
+            nn.Dropout(dropout_rate),
             nn.Linear(hidden_dim // 2, 1)
         )
 
@@ -104,29 +103,23 @@ class AntiviralGNN(nn.Module):
         for i, conv in enumerate(self.convs):
             x_in = x
             
-            # GINEConv
+            # GINE update
+            # Note: GINEConv expects edge_attr to be same dim as x (handled by encoders above)
             x = conv(x, edge_index, edge_attr=edge_attr)
             
-            # Batch Norm + Activation
+            # Batch Norm + Act + Dropout
             x = self.bns[i](x)
             x = F.relu(x)
-            
-            # Dropout
             x = F.dropout(x, p=self.dropout_rate, training=self.training)
             
             # Residual Connection
             x = x + x_in
 
-        # 3. Global Pooling
-        # Attention Pooling helps focus on significant nodes
-        x_att = self.pool_att(x, batch)
-        # Max Pooling captures peak activations
-        x_max = global_max_pool(x, batch)
-        
-        x_pool = torch.cat([x_att, x_max], dim=1)
+        # 3. Pooling (Set2Set)
+        x_graph = self.pooling(x, batch)
         
         # 4. Classification
-        out = self.classifier(x_pool)
+        out = self.classifier(x_graph)
         
         if return_attention_weights:
             return out.squeeze(-1), []
@@ -134,12 +127,12 @@ class AntiviralGNN(nn.Module):
         return out.squeeze(-1)
 
 # Hyperparameters
-LEARNING_RATE = 0.001
-BATCH_SIZE = 256
-WEIGHT_DECAY = 1e-5
+LEARNING_RATE = 0.0005  # Reduced LR for stability with Set2Set
+BATCH_SIZE = 128        # Smaller batch size to improve generalization
+WEIGHT_DECAY = 1e-4     # L2 Regularization
 SCHEDULER_PATIENCE = 5
 TIME_BUDGET = 900
-DESCRIPTION = "GINE-256 (5 layers) + GlobalAttention/Max Pool + Dropout 0.2"
+DESCRIPTION = "GINE-256 (5 layers) + Set2Set + Dropout 0.4"
 
 ## END OF AGENT MODIFIABLE SECTION ##
 
