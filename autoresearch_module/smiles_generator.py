@@ -6,6 +6,7 @@ import pandas as pd
 from rdkit import Chem
 import os
 import warnings
+import argparse
 
 from rdkit import RDLogger
 RDLogger.DisableLog('rdApp.*')
@@ -58,7 +59,7 @@ class SMILESRNN(nn.Module):
         return out, hidden
 
 # --- 4. Generation Function ---
-def generate_molecules(model, vocab, num_mols=10, max_len=100, temperature=1.0):
+def generate_molecules(model, vocab, num_mols=10, max_len=100, temperature=1.0, seed_smiles=None):
     model.eval()
     molecules = []
     device = next(model.parameters()).device
@@ -69,7 +70,18 @@ def generate_molecules(model, vocab, num_mols=10, max_len=100, temperature=1.0):
             hidden = None
             generated_chars = []
             
-            for _ in range(max_len):
+            # Warm up the RNN hidden state with the provided seed
+            if seed_smiles:
+                for char in seed_smiles:
+                    if char in vocab.char2idx:
+                        output, hidden = model(input_seq, hidden)
+                        generated_chars.append(char)
+                        input_seq = torch.tensor([[vocab.char2idx[char]]]).to(device)
+                    else:
+                        print(f"Warning: Character '{char}' not in vocabulary. Skipping.")
+                        break
+            
+            for _ in range(max_len - len(generated_chars)):
                 output, hidden = model(input_seq, hidden)
                 logits = output[0, -1, :] / temperature
                 probs = F.softmax(logits, dim=0)
@@ -85,7 +97,7 @@ def generate_molecules(model, vocab, num_mols=10, max_len=100, temperature=1.0):
             molecules.append(smiles)
     return molecules
 
-def main():
+def train_model():
     print("Downloading HIV dataset to extract Active compounds...")
     df = pd.read_csv("https://deepchemdata.s3-us-west-1.amazonaws.com/datasets/HIV.csv")
     active_smiles = df[df['HIV_active'] == 1]['smiles'].dropna().tolist()
@@ -100,7 +112,7 @@ def main():
     optimizer = torch.optim.Adam(model.parameters(), lr=0.002)
     criterion = nn.CrossEntropyLoss(ignore_index=0)
 
-    epochs = 10
+    epochs = 1000
     print(f"\nTraining Generative Model for {epochs} epochs on {device}...")
     
     for epoch in range(epochs):
@@ -134,5 +146,48 @@ def main():
     torch.save(model.state_dict(), "smiles_generator.pth")
     print("Saved generative model to 'smiles_generator.pth'")
 
+def generate_from_seed(model_path, seed_smiles, num_mols=10, temperature=0.8):
+    print("Loading vocabulary...")
+    df = pd.read_csv("https://deepchemdata.s3-us-west-1.amazonaws.com/datasets/HIV.csv")
+    active_smiles = df[df['HIV_active'] == 1]['smiles'].dropna().tolist()
+    vocab = SMILESVocab(active_smiles)
+
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    model = SMILESRNN(vocab.vocab_size).to(device)
+    
+    if os.path.exists(model_path):
+        model.load_state_dict(torch.load(model_path, map_location=device))
+        print(f"Loaded trained model from '{model_path}'")
+    else:
+        print(f"Error: Model file '{model_path}' not found.")
+        return
+
+    print(f"\n--- Generating {num_mols} Variations from Seed: '{seed_smiles}' ---")
+    new_smiles = generate_molecules(model, vocab, num_mols=num_mols, temperature=temperature, seed_smiles=seed_smiles)
+    
+    valid_count = 0
+    for i, s in enumerate(new_smiles):
+        mol = Chem.MolFromSmiles(s)
+        is_valid = "VALID" if mol is not None else "INVALID"
+        if mol is not None: valid_count += 1
+        print(f"{i+1:2d}. {is_valid:<7} | {s}")
+        
+    print(f"\n{valid_count}/{num_mols} molecules were chemically valid.")
+
 if __name__ == "__main__":
-    main()
+    parser = argparse.ArgumentParser(description="Train or generate SMILES with RNN.")
+    parser.add_argument("--mode", type=str, choices=['train', 'generate'], default='train', help="Run mode: 'train' or 'generate'.")
+    parser.add_argument("--seed", type=str, default="", help="Partial SMILES string to seed the generator.")
+    parser.add_argument("--num", type=int, default=10, help="Number of molecules to generate.")
+    parser.add_argument("--temp", type=float, default=0.8, help="Temperature for sampling.")
+    parser.add_argument("--model", type=str, default="smiles_generator_rl.pth", help="Path to trained model.")
+    
+    args = parser.parse_args()
+    
+    if args.mode == 'train':
+        train_model()
+    elif args.mode == 'generate':
+        if not args.seed:
+            print("Error: Please provide a --seed string when in 'generate' mode.")
+        else:
+            generate_from_seed(args.model, args.seed, args.num, args.temp)
