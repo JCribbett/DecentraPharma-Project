@@ -12,7 +12,7 @@ import requests
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
 SCRIPT_TO_EDIT = os.path.join(SCRIPT_DIR, "train_gnn.py")
 RESULTS_FILE = os.path.join(SCRIPT_DIR, "results_gnn.tsv")
-PROGRAM_INSTRUCTIONS = os.path.join(SCRIPT_DIR, "program.md")
+PROGRAM_INSTRUCTIONS = os.path.join(SCRIPT_DIR, "program_gnn.md")
 
 def get_file_content(filepath):
     with open(filepath, "r") as f:
