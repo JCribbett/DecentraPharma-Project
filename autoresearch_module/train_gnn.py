@@ -26,13 +26,13 @@ warnings.filterwarnings("ignore", message=".*scatter.*")
 
 class AntiviralGNN(nn.Module):
     """
-    Robust GATv2 Architecture with Input Projection and Residual Connections.
-    Uses 256 hidden units, 3 layers, and edge features.
+    Deep Residual GATv2 (4 layers) with ELU activations and increased capacity.
+    Using Mean+Max pooling and optimized hyperparameters for 300s budget.
     """
     def __init__(self, num_node_features=NUM_ATOM_FEATURES, num_edge_features=NUM_BOND_FEATURES):
         super(AntiviralGNN, self).__init__()
 
-        hidden_dim = 256
+        hidden_dim = 192 
         heads = 4
         
         # Input projection to transform node features to hidden dimension
@@ -40,25 +40,29 @@ class AntiviralGNN(nn.Module):
         
         # GATv2 Layers
         # concat=True -> output dim is heads * (hidden_dim // heads) = hidden_dim
-        # We use edge_dim to utilize bond features
+        # We use consistent hidden dimension throughout to facilitate residual connections
         self.conv1 = GATv2Conv(hidden_dim, hidden_dim // heads, heads=heads, edge_dim=num_edge_features, concat=True)
         self.conv2 = GATv2Conv(hidden_dim, hidden_dim // heads, heads=heads, edge_dim=num_edge_features, concat=True)
         self.conv3 = GATv2Conv(hidden_dim, hidden_dim // heads, heads=heads, edge_dim=num_edge_features, concat=True)
+        self.conv4 = GATv2Conv(hidden_dim, hidden_dim // heads, heads=heads, edge_dim=num_edge_features, concat=True)
 
-        # Batch Normalization for stability
         self.bn1 = nn.BatchNorm1d(hidden_dim)
         self.bn2 = nn.BatchNorm1d(hidden_dim)
         self.bn3 = nn.BatchNorm1d(hidden_dim)
+        self.bn4 = nn.BatchNorm1d(hidden_dim)
 
-        # MLP classifier head (hidden_dim * 2 because of cat(mean, max))
+        # Pooling: Mean + Max (Concatenated)
+        self.pool_dim = hidden_dim * 2
+        
+        # Classifier head
         self.classifier = nn.Sequential(
-            nn.Linear(hidden_dim * 2, hidden_dim),
+            nn.Linear(self.pool_dim, hidden_dim),
             nn.BatchNorm1d(hidden_dim),
-            nn.ReLU(),
+            nn.ELU(),
             nn.Dropout(0.3),
             nn.Linear(hidden_dim, hidden_dim // 2),
             nn.BatchNorm1d(hidden_dim // 2),
-            nn.ReLU(),
+            nn.ELU(),
             nn.Dropout(0.3),
             nn.Linear(hidden_dim // 2, 1)
         )
@@ -66,54 +70,63 @@ class AntiviralGNN(nn.Module):
     def forward(self, x, edge_index, batch, edge_attr=None, return_attention_weights=False):
         # 1. Project Input
         x = self.atom_encoder(x)
-        x = F.relu(x)
+        x = F.elu(x)
 
-        # 2. GATv2 Layer 1 + Residual
+        # 2. GATv2 Layers with Residuals
+        # Pre-activation residual block structure: x = x + Block(x)
+        
+        # Layer 1
         x_in = x
         x = self.conv1(x, edge_index, edge_attr=edge_attr)
         x = self.bn1(x)
-        x = F.relu(x)
+        x = F.elu(x)
         x = F.dropout(x, p=0.1, training=self.training)
         x = x + x_in 
 
-        # 3. GATv2 Layer 2 + Residual
+        # Layer 2
         x_in = x
         x = self.conv2(x, edge_index, edge_attr=edge_attr)
         x = self.bn2(x)
-        x = F.relu(x)
+        x = F.elu(x)
         x = F.dropout(x, p=0.1, training=self.training)
         x = x + x_in 
 
-        # 4. GATv2 Layer 3 + Residual
+        # Layer 3
         x_in = x
         x = self.conv3(x, edge_index, edge_attr=edge_attr)
         x = self.bn3(x)
-        x = F.relu(x)
+        x = F.elu(x)
         x = F.dropout(x, p=0.1, training=self.training)
-        x = x + x_in 
+        x = x + x_in
+        
+        # Layer 4 (Deep GAT)
+        x_in = x
+        x = self.conv4(x, edge_index, edge_attr=edge_attr)
+        x = self.bn4(x)
+        x = F.elu(x)
+        x = F.dropout(x, p=0.1, training=self.training)
+        x = x + x_in
 
-        # 5. Global Pooling (Mean + Max)
+        # 3. Global Pooling
         x_mean = global_mean_pool(x, batch)
         x_max = global_max_pool(x, batch)
         x_pool = torch.cat([x_mean, x_max], dim=1)
 
-        # 6. Classification
+        # 4. Classification
         out = self.classifier(x_pool)
         
         if return_attention_weights:
-            # Placeholder if attention weights are requested, though not returned here
-            # to keep signature compatible
             return out.squeeze(-1), []
             
         return out.squeeze(-1)
 
 # Hyperparameters
-LEARNING_RATE = 0.0005
+LEARNING_RATE = 0.001 # Increased from 0.0005 to speed up convergence in restricted time
 BATCH_SIZE = 256
-WEIGHT_DECAY = 1e-4
-SCHEDULER_PATIENCE = 10
+WEIGHT_DECAY = 1e-5 # Reduced from 1e-4 to allow fitting deeper model
+SCHEDULER_PATIENCE = 5 # Reduced patience to react faster to plateaus
 TIME_BUDGET = 300
-DESCRIPTION = "ResGATv2-256 (3 layers) with aligned residuals and BN"
+DESCRIPTION = "ResGATv2-192 (4 layers) with ELU activations"
 
 ## END OF AGENT MODIFIABLE SECTION ##
 
