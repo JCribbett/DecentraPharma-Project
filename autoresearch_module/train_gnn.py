@@ -23,73 +23,94 @@ from prepare_graph import prepare_graph_data, evaluate_graph_metric, NUM_ATOM_FE
 
 class AntiviralGNN(nn.Module):
     """
-    Graph Attention Network for molecular property prediction.
-    Architecture: 4 GATv2 layers -> global pooling -> MLP classifier.
+    Residual Graph Attention Network (ResGAT)
+    - Input projection to 256 dim
+    - 3 layers of GATv2 with Residual Connections, BN, and Dropout
+    - Global Mean+Max Pooling
+    - Deeper MLP Classifier
     """
     def __init__(self, num_node_features=NUM_ATOM_FEATURES, num_edge_features=NUM_BOND_FEATURES):
         super(AntiviralGNN, self).__init__()
 
-        hidden_dim = 128
+        hidden_dim = 256
         heads = 4
+        self.dropout_rate = 0.3
+
+        # Project initial node features to hidden dimension
+        self.node_encoder = nn.Linear(num_node_features, hidden_dim)
 
         # Graph attention layers
-        self.conv1 = GATv2Conv(num_node_features, hidden_dim // heads, heads=heads, edge_dim=num_edge_features)
-        self.conv2 = GATv2Conv(hidden_dim, hidden_dim // heads, heads=heads, edge_dim=num_edge_features)
-        self.conv3 = GATv2Conv(hidden_dim, hidden_dim // heads, heads=heads, edge_dim=num_edge_features)
-        self.conv4 = GATv2Conv(hidden_dim, hidden_dim // heads, heads=heads, edge_dim=num_edge_features)
+        # GATv2Conv output size is heads * out_channels
+        self.conv1 = GATv2Conv(hidden_dim, hidden_dim // heads, heads=heads, edge_dim=num_edge_features, concat=True)
+        self.conv2 = GATv2Conv(hidden_dim, hidden_dim // heads, heads=heads, edge_dim=num_edge_features, concat=True)
+        self.conv3 = GATv2Conv(hidden_dim, hidden_dim // heads, heads=heads, edge_dim=num_edge_features, concat=True)
 
         # Batch normalization for graph layers
         self.bn1 = nn.BatchNorm1d(hidden_dim)
         self.bn2 = nn.BatchNorm1d(hidden_dim)
         self.bn3 = nn.BatchNorm1d(hidden_dim)
-        self.bn4 = nn.BatchNorm1d(hidden_dim)
 
         # MLP classifier head (after pooling)
         self.classifier = nn.Sequential(
             nn.Linear(hidden_dim * 2, hidden_dim),
+            nn.BatchNorm1d(hidden_dim),
             nn.ReLU(),
             nn.Dropout(0.4),
-            nn.Linear(hidden_dim, 1)
+            nn.Linear(hidden_dim, hidden_dim // 2),
+            nn.ReLU(),
+            nn.Dropout(0.4),
+            nn.Linear(hidden_dim // 2, 1)
         )
 
     def forward(self, x, edge_index, batch, edge_attr=None, return_attention_weights=False):
-        attn_weights = []
-        
-        def apply_conv(conv, x_in):
-            if return_attention_weights:
-                # PyG returns (out, (edge_index, alpha)) when this flag is True
-                out, (e_idx, alpha) = conv(x_in, edge_index, edge_attr=edge_attr, return_attention_weights=True)
-                attn_weights.append((e_idx, alpha))
-                return out
-            return conv(x_in, edge_index, edge_attr=edge_attr)
+        # Initial projection
+        x = self.node_encoder(x)
+        x = F.elu(x)
+        x = F.dropout(x, p=0.1, training=self.training)
 
-        # GAT layers with residual-style connections and optional attention extraction
-        x1 = F.elu(self.bn1(apply_conv(self.conv1, x)))
-        x2 = F.elu(self.bn2(apply_conv(self.conv2, x1)))
-        x1_res = x1 + x2
-        
-        x3 = F.elu(self.bn3(apply_conv(self.conv3, x1_res)))
-        x4 = F.elu(self.bn4(apply_conv(self.conv4, x3)))
-        x3_res = x3 + x4
+        # Block 1
+        x_residual = x
+        x = self.conv1(x, edge_index, edge_attr=edge_attr)
+        x = self.bn1(x)
+        x = F.elu(x)
+        x = F.dropout(x, p=self.dropout_rate, training=self.training)
+        x = x + x_residual
+
+        # Block 2
+        x_residual = x
+        x = self.conv2(x, edge_index, edge_attr=edge_attr)
+        x = self.bn2(x)
+        x = F.elu(x)
+        x = F.dropout(x, p=self.dropout_rate, training=self.training)
+        x = x + x_residual
+
+        # Block 3
+        x_residual = x
+        x = self.conv3(x, edge_index, edge_attr=edge_attr)
+        x = self.bn3(x)
+        x = F.elu(x)
+        x = F.dropout(x, p=self.dropout_rate, training=self.training)
+        x = x + x_residual
 
         # Global pooling (mean + max concatenation)
-        x_mean = global_mean_pool(x3_res, batch)
-        x_max = global_max_pool(x3_res, batch)
+        x_mean = global_mean_pool(x, batch)
+        x_max = global_max_pool(x, batch)
         x = torch.cat([x_mean, x_max], dim=1)
 
         # Classify
         out = self.classifier(x)
         if return_attention_weights:
-            return out.squeeze(-1), attn_weights
+            return out.squeeze(-1), [] # Attention weights not captured for speed
+            
         return out.squeeze(-1)
 
 # Hyperparameters
-LEARNING_RATE= 3e-4
-BATCH_SIZE= 106
+LEARNING_RATE= 0.0005
+BATCH_SIZE= 128
 WEIGHT_DECAY= 1e-5
-SCHEDULER_PATIENCE = 8
-TIME_BUDGET= 1325 # 20 minutes
-DESCRIPTION = "4-layer GATv2 baseline test"
+SCHEDULER_PATIENCE = 5
+TIME_BUDGET= 1325
+DESCRIPTION = "ResGAT-256 (3 layers) with Input Projection"
 
 ## END OF AGENT MODIFIABLE SECTION ##
 
