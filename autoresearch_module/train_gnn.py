@@ -26,94 +26,98 @@ warnings.filterwarnings("ignore", message=".*scatter.*")
 
 class AntiviralGNN(nn.Module):
     """
-    Robust GATv2 Architecture with Input Projection and Residual Connections.
-    Uses 256 hidden units, 3 layers, and edge features.
+    GINE (Graph Isomorphism Network with Edge Features)
+    - Architecture chosen for its high expressive power (WL-test equivalent).
+    - Uses bond features explicitly in aggregation via GINEConv.
+    - 5 Layers with residual connections and BatchNorm.
+    - Concatenated Mean+Max pooling for graph representation.
     """
     def __init__(self, num_node_features=NUM_ATOM_FEATURES, num_edge_features=NUM_BOND_FEATURES):
         super(AntiviralGNN, self).__init__()
 
         hidden_dim = 256
-        heads = 4
+        num_layers = 5  # Increased depth
         
-        # Input projection to transform node features to hidden dimension
+        # Encoders for atoms and bonds
         self.atom_encoder = nn.Linear(num_node_features, hidden_dim)
+        self.bond_encoder = nn.Linear(num_edge_features, hidden_dim)
         
-        # GATv2 Layers
-        # concat=True -> output dim is heads * (hidden_dim // heads) = hidden_dim
-        # We use edge_dim to utilize bond features
-        self.conv1 = GATv2Conv(hidden_dim, hidden_dim // heads, heads=heads, edge_dim=num_edge_features, concat=True)
-        self.conv2 = GATv2Conv(hidden_dim, hidden_dim // heads, heads=heads, edge_dim=num_edge_features, concat=True)
-        self.conv3 = GATv2Conv(hidden_dim, hidden_dim // heads, heads=heads, edge_dim=num_edge_features, concat=True)
+        self.convs = nn.ModuleList()
+        self.bns = nn.ModuleList()
+        
+        for _ in range(num_layers):
+            # MLP for GINE layer: transforms aggregated features
+            # Structure: Linear -> BN -> ReLU -> Linear
+            nn_blk = nn.Sequential(
+                nn.Linear(hidden_dim, hidden_dim * 2),
+                nn.BatchNorm1d(hidden_dim * 2),
+                nn.ReLU(),
+                nn.Linear(hidden_dim * 2, hidden_dim)
+            )
+            # train_eps=True enables learning the central node weight
+            self.convs.append(GINEConv(nn_blk, train_eps=True))
+            self.bns.append(nn.BatchNorm1d(hidden_dim))
 
-        # Batch Normalization for stability
-        self.bn1 = nn.BatchNorm1d(hidden_dim)
-        self.bn2 = nn.BatchNorm1d(hidden_dim)
-        self.bn3 = nn.BatchNorm1d(hidden_dim)
-
-        # MLP classifier head (hidden_dim * 2 because of cat(mean, max))
+        # Classifier head
+        # Inputs: hidden_dim * 2 (from Mean + Max pooling)
         self.classifier = nn.Sequential(
             nn.Linear(hidden_dim * 2, hidden_dim),
             nn.BatchNorm1d(hidden_dim),
             nn.ReLU(),
-            nn.Dropout(0.3),
+            nn.Dropout(0.4),
             nn.Linear(hidden_dim, hidden_dim // 2),
             nn.BatchNorm1d(hidden_dim // 2),
             nn.ReLU(),
-            nn.Dropout(0.3),
+            nn.Dropout(0.4),
             nn.Linear(hidden_dim // 2, 1)
         )
 
     def forward(self, x, edge_index, batch, edge_attr=None, return_attention_weights=False):
-        # 1. Project Input
+        # 1. Feature Projection
         x = self.atom_encoder(x)
-        x = F.relu(x)
+        
+        if edge_attr is not None:
+            edge_attr = self.bond_encoder(edge_attr)
+        
+        # 2. Message Passing
+        for i, conv in enumerate(self.convs):
+            x_in = x
+            
+            # GINEConv step
+            # GINEConv expects edge_attr to be added to neighbor features, so dimensions must match hidden_dim
+            x = conv(x, edge_index, edge_attr=edge_attr)
+            
+            # Batch Norm + Activation
+            x = self.bns[i](x)
+            x = F.relu(x)
+            
+            # Dropout
+            x = F.dropout(x, p=0.1, training=self.training)
+            
+            # Residual Connection
+            x = x + x_in
 
-        # 2. GATv2 Layer 1 + Residual
-        x_in = x
-        x = self.conv1(x, edge_index, edge_attr=edge_attr)
-        x = self.bn1(x)
-        x = F.relu(x)
-        x = F.dropout(x, p=0.1, training=self.training)
-        x = x + x_in 
-
-        # 3. GATv2 Layer 2 + Residual
-        x_in = x
-        x = self.conv2(x, edge_index, edge_attr=edge_attr)
-        x = self.bn2(x)
-        x = F.relu(x)
-        x = F.dropout(x, p=0.1, training=self.training)
-        x = x + x_in 
-
-        # 4. GATv2 Layer 3 + Residual
-        x_in = x
-        x = self.conv3(x, edge_index, edge_attr=edge_attr)
-        x = self.bn3(x)
-        x = F.relu(x)
-        x = F.dropout(x, p=0.1, training=self.training)
-        x = x + x_in 
-
-        # 5. Global Pooling (Mean + Max)
+        # 3. Global Pooling
+        # Combining Mean and Max pooling captures both average properties and specific motifs
         x_mean = global_mean_pool(x, batch)
         x_max = global_max_pool(x, batch)
         x_pool = torch.cat([x_mean, x_max], dim=1)
-
-        # 6. Classification
+        
+        # 4. Classification
         out = self.classifier(x_pool)
         
         if return_attention_weights:
-            # Placeholder if attention weights are requested, though not returned here
-            # to keep signature compatible
             return out.squeeze(-1), []
             
         return out.squeeze(-1)
 
 # Hyperparameters
-LEARNING_RATE = 0.0005
+LEARNING_RATE = 0.001
 BATCH_SIZE = 256
-WEIGHT_DECAY = 1e-4
-SCHEDULER_PATIENCE = 10
+WEIGHT_DECAY = 1e-5
+SCHEDULER_PATIENCE = 7
 TIME_BUDGET = 900
-DESCRIPTION = "ResGATv2-256 (3 layers) with aligned residuals and BN"
+DESCRIPTION = "GINE-256 (5 layers) + ResNet + Mean/Max Pool"
 
 ## END OF AGENT MODIFIABLE SECTION ##
 
