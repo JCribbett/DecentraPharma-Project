@@ -5,8 +5,9 @@ import os
 import time
 
 ## START OF AGENT IMPORTS ##
-from torch_geometric.nn import GCNConv, global_mean_pool, global_max_pool
+from torch_geometric.nn import GATv2Conv, global_mean_pool, global_max_pool
 import torch.nn.functional as F
+from torch.nn import BatchNorm1d
 ## END OF AGENT IMPORTS ##
 
 # Assume data_loader.py and model_tox.py are in the same directory or accessible
@@ -16,35 +17,64 @@ from training_utils import train_epoch, evaluate, save_checkpoint, load_checkpoi
 ## START OF AGENT MODIFIABLE SECTION ##
 # Configuration Parameters (these will be tuned by the optimizer)
 HIDDEN_DIM = 64
-DROPOUT = 0.2
-LEARNING_RATE = 3e-4
+DROPOUT = 0.1
+LEARNING_RATE = 5e-4
 BATCH_SIZE = 128
-WEIGHT_DECAY = 1e-5
-SCHEDULER_PATIENCE = 7
+WEIGHT_DECAY = 1e-4
+SCHEDULER_PATIENCE = 5
 TIME_BUDGET = 1325 # seconds
-DESCRIPTION = "Tox GNN Baseline"
+DESCRIPTION = "GATv2 3-Layer with Multi-Head Attention"
 
 class AntiviralGNN(nn.Module):
-    def __init__(self, num_features=16, hidden_dim=64, dropout=0.2, num_classes=1):
+    def __init__(self, num_features=16, hidden_dim=64, dropout=0.1, num_classes=1):
         super(AntiviralGNN, self).__init__()
-        self.dropout = nn.Dropout(dropout)
+        self.dropout_ratio = dropout
+        
+        # GATv2 with multi-head attention to capture partial structures (toxicophores)
+        heads = 4
+        
+        # Layer 1: Input -> Hidden (Expanded by heads)
+        self.conv1 = GATv2Conv(num_features, hidden_dim, heads=heads, dropout=dropout, concat=True)
+        self.bn1 = BatchNorm1d(hidden_dim * heads)
+        
+        # Layer 2: Hidden -> Hidden
+        self.conv2 = GATv2Conv(hidden_dim * heads, hidden_dim, heads=heads, dropout=dropout, concat=True)
+        self.bn2 = BatchNorm1d(hidden_dim * heads)
+        
+        # Layer 3: Hidden -> Hidden (Collapsed to single head for pooling)
+        self.conv3 = GATv2Conv(hidden_dim * heads, hidden_dim, heads=1, dropout=dropout, concat=False)
+        self.bn3 = BatchNorm1d(hidden_dim)
 
-        self.conv1 = GCNConv(num_features, hidden_dim)
-        self.conv2 = GCNConv(hidden_dim, hidden_dim)
-
+        # Classifier head
         self.classifier = nn.Sequential(
-            nn.Linear(hidden_dim * 2, hidden_dim),
+            nn.Linear(hidden_dim * 2, hidden_dim), # *2 for pooled_res (mean + max)
             nn.ReLU(),
-            self.dropout,
+            nn.Dropout(dropout),
             nn.Linear(hidden_dim, num_classes)
         )
 
     def forward(self, data):
         x, edge_index, batch = data.x, data.edge_index, data.batch
 
-        x = F.relu(self.conv1(x, edge_index))
-        x = F.relu(self.conv2(x, edge_index))
+        # Layer 1
+        x = self.conv1(x, edge_index)
+        x = self.bn1(x)
+        x = F.elu(x) 
+        x = F.dropout(x, p=self.dropout_ratio, training=self.training)
 
+        # Layer 2
+        x = self.conv2(x, edge_index)
+        x = self.bn2(x)
+        x = F.elu(x)
+        x = F.dropout(x, p=self.dropout_ratio, training=self.training)
+        
+        # Layer 3
+        x = self.conv3(x, edge_index)
+        x = self.bn3(x)
+        # No strong activation before pooling, allow negative values to be handled by max_pool or mixed
+        
+        # Global Pooling (Readout)
+        # Combining Mean and Max pooling captures both the "average" property and "extreme" features (like a single highly toxic group)
         mean_pool = global_mean_pool(x, batch)
         max_pool = global_max_pool(x, batch)
         
