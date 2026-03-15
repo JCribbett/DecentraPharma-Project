@@ -71,6 +71,7 @@ def run_docking(receptor_file, ligand_file, output_file, script_dir):
     print("Executing physics simulation... (This may take a minute or two)")
     process = subprocess.run(cmd, capture_output=True, text=True, cwd=project_dir)
     
+    best_score = None
     if process.returncode == 0:
         print(f"\n✅ Docking complete! Results saved to {os.path.basename(output_file)}")
         print("\n--- Top Binding Affinities (kcal/mol) ---")
@@ -78,9 +79,15 @@ def run_docking(receptor_file, ligand_file, output_file, script_dir):
         for line in process.stdout.split('\n'):
             if line.strip().startswith(("mode", "---", "1 ", "2 ", "3 ")):
                 print(line)
+            if line.strip().startswith("1 "):
+                parts = line.split()
+                if len(parts) >= 2:
+                    best_score = float(parts[1])
     else:
         print("❌ Docking failed.")
         print(process.stderr)
+        
+    return best_score
 
 if __name__ == "__main__":
     script_dir = os.path.dirname(os.path.abspath(__file__))

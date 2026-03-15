@@ -66,20 +66,30 @@ def mol_to_graph(mol):
         start_node = bond.GetBeginAtomIdx()
         end_node = bond.GetEndAtomIdx()
         
-        edge_list.append([start_node, end_node])
-        edge_features_list.append(torch.tensor([bond.GetBondTypeAsDouble()], dtype=torch.float)) # Bond type as feature
+        bt = bond.GetBondType()
+        fbond = [
+            1 if bt == Chem.rdchem.BondType.SINGLE else 0,
+            1 if bt == Chem.rdchem.BondType.DOUBLE else 0,
+            1 if bt == Chem.rdchem.BondType.TRIPLE else 0,
+            1 if bt == Chem.rdchem.BondType.AROMATIC else 0,
+            int(bond.GetIsConjugated()),
+            int(bond.IsInRing()),
+        ]
         
+        edge_list.append([start_node, end_node])
+        edge_features_list.append(torch.tensor(fbond, dtype=torch.float))
+
         # Add reverse edge for undirected graph
         edge_list.append([end_node, start_node])
-        edge_features_list.append(torch.tensor([bond.GetBondTypeAsDouble()], dtype=torch.float))
+        edge_features_list.append(torch.tensor(fbond, dtype=torch.float))
 
     x = torch.stack(node_features_list, dim=0) if node_features_list else torch.empty((0, num_node_features))
     edge_index = torch.tensor(edge_list, dtype=torch.long).t().contiguous() if edge_list else torch.empty((2, 0), dtype=torch.long)
-    edge_attr = torch.stack(edge_features_list, dim=0) if edge_features_list else torch.empty((0, 1), dtype=torch.long)
+    edge_attr = torch.stack(edge_features_list, dim=0) if edge_features_list else torch.empty((0, 6), dtype=torch.float)
     
     # Ensure correct shape for edge_attr if it's empty
     if edge_attr.numel() == 0:
-        edge_attr = torch.empty((0, 1), dtype=torch.float)
+        edge_attr = torch.empty((0, 6), dtype=torch.float)
 
     return Data(x=x, edge_index=edge_index, edge_attr=edge_attr)
 

@@ -32,7 +32,7 @@ You may modify the code between `## START OF AGENT MODIFIABLE SECTION ##` and `#
 
 ### Evaluation
 - Primary metric: **ROC-AUC** on 20% held-out validation set
-- Each experiment runs for 5 minutes (TIME_BUDGET = 300s)
+- Each experiment runs for 15 minutes (TIME_BUDGET = 900s)
 - Log results to `results_gnn.tsv`
 - Keep changes that improve AUC, revert changes that don't
 
